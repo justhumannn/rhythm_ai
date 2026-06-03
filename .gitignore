@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+
+audio/
+checkpoints/
+generated/
+
+data/audio_manifest.json
+data/missing_audio_queries.txt
