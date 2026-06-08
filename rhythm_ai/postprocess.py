@@ -83,6 +83,8 @@ def logits_to_chart_events(
             )
 
     events = dedupe_same_lane_events(events)
+    events = remove_same_lane_hold_overlaps(events)
+    events = remove_taps_inside_holds(events)
     events.sort(key=lambda event: (event["beat"], event["lane"], event["type"]))
     return events
 
@@ -116,6 +118,57 @@ def event_priority(event: dict) -> tuple[int, float]:
     if event["type"] == "hold":
         return (1, float(event.get("durationBeats", 0.0)))
     return (0, 0.0)
+
+
+def remove_same_lane_hold_overlaps(events: list[dict]) -> list[dict]:
+    holds_by_lane: dict[str, list[dict]] = {}
+    others: list[dict] = []
+    for event in events:
+        if event["type"] == "hold":
+            holds_by_lane.setdefault(str(event["lane"]), []).append(event)
+        else:
+            others.append(event)
+
+    kept_holds: list[dict] = []
+    for lane_holds in holds_by_lane.values():
+        occupied_until = -float("inf")
+        for hold in sorted(
+            lane_holds,
+            key=lambda event: (
+                float(event["beat"]),
+                -float(event.get("durationBeats", 0.0)),
+                -float(event.get("endBeat", event["beat"])),
+            ),
+        ):
+            start = float(hold["beat"])
+            end = float(hold.get("endBeat", hold["beat"]))
+            if start < occupied_until - 1e-6:
+                continue
+            kept_holds.append(hold)
+            occupied_until = max(occupied_until, end)
+    return others + kept_holds
+
+
+def remove_taps_inside_holds(events: list[dict]) -> list[dict]:
+    holds_by_lane: dict[str, list[tuple[float, float]]] = {}
+    for event in events:
+        if event["type"] != "hold":
+            continue
+        holds_by_lane.setdefault(str(event["lane"]), []).append(
+            (float(event["beat"]), float(event.get("endBeat", event["beat"])))
+        )
+
+    cleaned: list[dict] = []
+    for event in events:
+        if event["type"] != "tap":
+            cleaned.append(event)
+            continue
+        lane_holds = holds_by_lane.get(str(event["lane"]), [])
+        beat = float(event["beat"])
+        if any(start - 1e-6 <= beat <= end + 1e-6 for start, end in lane_holds):
+            continue
+        cleaned.append(event)
+    return cleaned
 
 
 def peak_frames(values: np.ndarray, threshold: float, min_gap: int) -> list[int]:

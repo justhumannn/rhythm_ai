@@ -7,3 +7,13 @@ generated/
 
 data/audio_manifest.json
 data/missing_audio_queries.txt
+data/rhythm_web.sqlite
+
+data/youtube_search_results.csv
+data/youtube_search_results.json
+
+scripts/search_youtube_links.py
+
+web_app/
+
+youtube_to_wav.py

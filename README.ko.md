@@ -61,7 +61,7 @@ python3 scripts/ez2pattern_djmax_parser.py parse-one \
 - 프레임별 4개 레인의 `tap onset`
 - 프레임별 4개 레인의 `hold active`
 
-주의: YouTube에서 DJMAX 음원을 자동 검색/다운로드하는 도구는 포함하지 않습니다. 저작권과 플랫폼 약관 이슈가 있으므로, 학습에는 직접 권리를 가진 음원 파일이나 허가된 방식으로 준비한 로컬 오디오를 사용하세요.
+주의: 웹앱은 사용자가 입력한 YouTube 링크를 `yt-dlp`로 WAV 변환할 수 있습니다. 서비스 운영 시에는 저작권과 플랫폼 약관을 직접 확인해야 합니다.
 
 ### 의존성 설치
 
@@ -177,3 +177,50 @@ python3 scripts/evaluate_chart.py \
   --output data/djmax_4b_eval_summary.json \
   --format json
 ```
+
+## 웹 서비스
+
+FastAPI, SQLAlchemy, SQLite 기반의 로컬 웹앱입니다. 사용자가 YouTube 링크를 넣으면 WAV를 저장하고, WAV를 분석해 BPM을 자동 측정한 뒤 설정값을 바탕으로 4B 채보를 생성합니다. 생성된 채보는 브라우저에서 바로 플레이할 수 있습니다.
+
+### 실행
+
+```bash
+.venv/bin/python -m uvicorn web_app.main:app --host 127.0.0.1 --port 8000
+```
+
+브라우저에서 접속합니다.
+
+```text
+http://127.0.0.1:8000/
+```
+
+### 저장 위치
+
+- WAV 파일: `audio/web/`
+- SQLite DB: `data/rhythm_web.sqlite`
+
+### DB 테이블
+
+`wav_songs`
+
+- `id`
+- `youtube_url`
+- `title`
+- `wav_path`
+- `created_at`
+
+`chart_data`
+
+- `id`
+- `song_id`
+- `chart_json`
+- `difficulty`
+- `tap_ratio`
+- `hold_ratio`
+- `key_count`
+- `bpm`
+- `tap_threshold`
+- `hold_threshold`
+- `created_at`
+
+같은 YouTube 링크가 이미 저장되어 있으면 새로 다운로드하지 않고 DB에 저장된 곡과 채보 목록을 먼저 반환합니다. 저장된 채보가 있으면 프론트에서 첫 번째 채보를 바로 플레이할 수 있게 불러옵니다.
