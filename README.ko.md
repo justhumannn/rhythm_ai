@@ -69,6 +69,86 @@ python3 scripts/ez2pattern_djmax_parser.py parse-one \
 python3 -m pip install -r requirements.txt
 ```
 
+## 처음 실행: Minimal local demo
+
+외부 음원이나 DJMAX 음원 없이 실제 파이프라인 전체를 확인하는 작은 예제입니다. 준비 스크립트가 저작권 문제가 없는 합성 WAV와 대응하는 4B 채보를 생성합니다.
+
+### 1. 데모 입력 생성
+
+```bash
+python3 scripts/prepare_minimal_demo.py
+```
+
+생성 파일:
+
+- `demo/audio/Minimal Demo Pulse.wav`
+- `demo/data/minimal_charts.jsonl`
+
+### 2. 오디오 매니페스트 생성
+
+```bash
+python3 scripts/create_audio_manifest.py \
+  --charts demo/data/minimal_charts.jsonl \
+  --audio-dir demo/audio \
+  --output demo/data/audio_manifest.json \
+  --missing-output demo/data/missing_audio_queries.txt
+```
+
+정상 실행되면 `matched: 1`, `missing: 0`이 출력됩니다.
+
+### 3. 작은 모델 학습
+
+```bash
+python3 scripts/train_chart_model.py \
+  --charts demo/data/minimal_charts.jsonl \
+  --audio-manifest demo/data/audio_manifest.json \
+  --output demo/checkpoints/minimal_demo.pt \
+  --epochs 2 \
+  --samples-per-epoch 32 \
+  --segment-frames 256 \
+  --batch-size 4 \
+  --hidden-size 64
+```
+
+일반 학습보다 작은 모델과 데이터 수를 사용하므로 로컬 환경에서 파이프라인이 작동하는지 빠르게 확인할 수 있습니다.
+
+### 4. 채보 생성
+
+```bash
+python3 scripts/generate_chart.py \
+  --checkpoint demo/checkpoints/minimal_demo.pt \
+  --audio "demo/audio/Minimal Demo Pulse.wav" \
+  --title "Minimal Demo Generated" \
+  --difficulty NM \
+  --bpm 120 \
+  --tap-threshold 0.55 \
+  --hold-threshold 0.55 \
+  --output demo/generated/minimal_demo_4b.json
+```
+
+### 5. 생성 결과 평가
+
+```bash
+python3 scripts/evaluate_chart.py \
+  --chart demo/generated/minimal_demo_4b.json \
+  --reference-jsonl demo/data/minimal_charts.jsonl \
+  --reference-title "Minimal Demo Pulse" \
+  --reference-difficulty NM
+```
+
+전체 산출물 구조:
+
+```text
+demo/
+├── audio/Minimal Demo Pulse.wav
+├── data/minimal_charts.jsonl
+├── data/audio_manifest.json
+├── checkpoints/minimal_demo.pt
+└── generated/minimal_demo_4b.json
+```
+
+이 데모의 2 epoch 모델은 채보 품질을 평가하기 위한 모델이 아니라 설치 상태와 전체 실행 흐름을 검증하기 위한 smoke test입니다.
+
 ### 오디오 매니페스트 만들기
 
 로컬 음원 폴더와 채보 제목을 매칭합니다.

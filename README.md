@@ -66,6 +66,85 @@ Install dependencies:
 python3 -m pip install -r requirements.txt
 ```
 
+## Minimal Local Demo
+
+This smoke test creates a copyright-free synthetic WAV and a matching 4B chart,
+then runs the real manifest, training, generation, and evaluation scripts. It
+does not require DJMAX audio or any external download.
+
+Create the demo input:
+
+```bash
+python3 scripts/prepare_minimal_demo.py
+```
+
+This creates:
+
+- `demo/audio/Minimal Demo Pulse.wav`
+- `demo/data/minimal_charts.jsonl`
+
+Build the one-song audio manifest:
+
+```bash
+python3 scripts/create_audio_manifest.py \
+  --charts demo/data/minimal_charts.jsonl \
+  --audio-dir demo/audio \
+  --output demo/data/audio_manifest.json \
+  --missing-output demo/data/missing_audio_queries.txt
+```
+
+Train a deliberately small model:
+
+```bash
+python3 scripts/train_chart_model.py \
+  --charts demo/data/minimal_charts.jsonl \
+  --audio-manifest demo/data/audio_manifest.json \
+  --output demo/checkpoints/minimal_demo.pt \
+  --epochs 2 \
+  --samples-per-epoch 32 \
+  --segment-frames 256 \
+  --batch-size 4 \
+  --hidden-size 64
+```
+
+Generate a chart:
+
+```bash
+python3 scripts/generate_chart.py \
+  --checkpoint demo/checkpoints/minimal_demo.pt \
+  --audio "demo/audio/Minimal Demo Pulse.wav" \
+  --title "Minimal Demo Generated" \
+  --difficulty NM \
+  --bpm 120 \
+  --tap-threshold 0.55 \
+  --hold-threshold 0.55 \
+  --output demo/generated/minimal_demo_4b.json
+```
+
+Evaluate it against the synthetic reference:
+
+```bash
+python3 scripts/evaluate_chart.py \
+  --chart demo/generated/minimal_demo_4b.json \
+  --reference-jsonl demo/data/minimal_charts.jsonl \
+  --reference-title "Minimal Demo Pulse" \
+  --reference-difficulty NM
+```
+
+The complete output layout is:
+
+```text
+demo/
+├── audio/Minimal Demo Pulse.wav
+├── data/minimal_charts.jsonl
+├── data/audio_manifest.json
+├── checkpoints/minimal_demo.pt
+└── generated/minimal_demo_4b.json
+```
+
+This two-epoch model is only an end-to-end environment check. Its generated
+chart is not expected to have production-quality patterns.
+
 Create an audio manifest from local files:
 
 ```bash

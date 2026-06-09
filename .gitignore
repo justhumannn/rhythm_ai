@@ -4,6 +4,7 @@ __pycache__/
 audio/
 checkpoints/
 generated/
+demo/
 
 data/audio_manifest.json
 data/missing_audio_queries.txt
