@@ -9,7 +9,12 @@ import torch
 from torch.utils.data import Dataset
 
 from rhythm_ai.audio import audio_to_features
-from rhythm_ai.chart import chart_to_frame_labels, load_jsonl, normalize_title
+from rhythm_ai.chart import (
+    DIFFICULTY_TO_INDEX,
+    chart_to_frame_labels,
+    load_jsonl,
+    normalize_title,
+)
 
 
 @dataclass(frozen=True)
@@ -41,10 +46,14 @@ class ChartAudioDataset(Dataset):
         audio_config: AudioConfig,
         segment_frames: int = 512,
         samples_per_epoch: int = 4096,
+        balanced_difficulty: bool = True,
+        tap_radius_frames: int = 1,
     ) -> None:
         self.audio_config = audio_config
         self.segment_frames = segment_frames
         self.samples_per_epoch = samples_per_epoch
+        self.balanced_difficulty = balanced_difficulty
+        self.tap_radius_frames = tap_radius_frames
         manifest = load_audio_manifest(audio_manifest_path)
 
         charts = load_jsonl(charts_path)
@@ -57,19 +66,29 @@ class ChartAudioDataset(Dataset):
         if not self.items:
             raise ValueError("no chart/audio pairs matched; check audio_manifest.json")
 
+        self.items_by_difficulty: dict[int, list[tuple[dict, str]]] = {}
+        for item in self.items:
+            difficulty_index = DIFFICULTY_TO_INDEX.get(item[0].get("difficulty"))
+            if difficulty_index is not None:
+                self.items_by_difficulty.setdefault(difficulty_index, []).append(item)
         self._feature_cache: dict[str, torch.Tensor] = {}
 
     def __len__(self) -> int:
         return self.samples_per_epoch
 
-    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
-        chart, audio_path = random.choice(self.items)
+    def __getitem__(
+        self,
+        index: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        chart, audio_path = self._sample_item()
+        difficulty_index = DIFFICULTY_TO_INDEX.get(chart.get("difficulty"), 0)
         features = self._features(audio_path)
         labels = torch.from_numpy(
             chart_to_frame_labels(
                 chart,
                 frame_seconds=self.audio_config.frame_seconds,
                 duration_seconds=features.shape[1] * self.audio_config.frame_seconds,
+                tap_radius_frames=self.tap_radius_frames,
             )
         )
 
@@ -80,12 +99,22 @@ class ChartAudioDataset(Dataset):
         if frames >= self.segment_frames:
             start = random.randint(0, frames - self.segment_frames)
             end = start + self.segment_frames
-            return features[:, start:end], labels[start:end]
+            return (
+                features[:, start:end],
+                labels[start:end],
+                torch.tensor(difficulty_index, dtype=torch.long),
+            )
 
         pad = self.segment_frames - frames
         features = torch.nn.functional.pad(features, (0, pad))
         labels = torch.nn.functional.pad(labels, (0, 0, 0, pad))
-        return features, labels
+        return features, labels, torch.tensor(difficulty_index, dtype=torch.long)
+
+    def _sample_item(self) -> tuple[dict, str]:
+        if self.balanced_difficulty and self.items_by_difficulty:
+            difficulty = random.choice(tuple(self.items_by_difficulty))
+            return random.choice(self.items_by_difficulty[difficulty])
+        return random.choice(self.items)
 
     def _features(self, audio_path: str) -> torch.Tensor:
         cached = self._feature_cache.get(audio_path)

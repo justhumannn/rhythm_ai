@@ -12,7 +12,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from rhythm_ai.audio import audio_to_features
-from rhythm_ai.chart import LANES_4B
+from rhythm_ai.chart import DIFFICULTY_TO_INDEX, LANES_4B
 from rhythm_ai.model import ChartGenerator
 from rhythm_ai.postprocess import logits_to_chart_events
 from scripts.evaluate_chart import evaluate_chart, find_reference, load_jsonl
@@ -77,7 +77,16 @@ def main() -> int:
     ).unsqueeze(0)
 
     with torch.no_grad():
-        logits = model(features.to(device)).squeeze(0).cpu().numpy()
+        model_input = features.to(device)
+        if model.difficulty_count > 0:
+            difficulty_name = args.reference_difficulty
+            difficulty = torch.tensor(
+                [DIFFICULTY_TO_INDEX[difficulty_name]],
+                device=device,
+            )
+            logits = model(model_input, difficulty).squeeze(0).cpu().numpy()
+        else:
+            logits = model(model_input).squeeze(0).cpu().numpy()
 
     reference = find_reference(
         load_jsonl(args.reference_jsonl),

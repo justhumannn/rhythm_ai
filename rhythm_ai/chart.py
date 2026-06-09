@@ -58,6 +58,7 @@ def chart_to_frame_labels(
     frame_seconds: float,
     lanes: Iterable[str] = LANES_4B,
     duration_seconds: float | None = None,
+    tap_radius_frames: int = 0,
 ) -> np.ndarray:
     import numpy as np
 
@@ -78,7 +79,9 @@ def chart_to_frame_labels(
         if not 0 <= start_frame < frame_count:
             continue
 
-        labels[start_frame, lane_index] = 1.0
+        tap_start = max(0, start_frame - tap_radius_frames)
+        tap_end = min(frame_count, start_frame + tap_radius_frames + 1)
+        labels[tap_start:tap_end, lane_index] = 1.0
         if event["type"] == "hold":
             end_seconds = beat_to_seconds(float(event["endBeat"]), bpm)
             end_frame = int(round(end_seconds / frame_seconds))

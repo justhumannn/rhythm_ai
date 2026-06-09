@@ -14,8 +14,10 @@ class ChartGenerator(nn.Module):
         hidden_size: int = 192,
         output_size: int = 8,
         dropout: float = 0.15,
+        difficulty_count: int = 0,
     ) -> None:
         super().__init__()
+        self.difficulty_count = difficulty_count
         self.encoder = nn.Sequential(
             nn.Conv1d(n_mels, 128, kernel_size=5, padding=2),
             nn.BatchNorm1d(128),
@@ -25,6 +27,11 @@ class ChartGenerator(nn.Module):
             nn.BatchNorm1d(hidden_size),
             nn.GELU(),
             nn.Dropout(dropout),
+        )
+        self.difficulty_embedding = (
+            nn.Embedding(difficulty_count, hidden_size)
+            if difficulty_count > 0
+            else None
         )
         self.temporal = nn.GRU(
             input_size=hidden_size,
@@ -42,8 +49,17 @@ class ChartGenerator(nn.Module):
             nn.Linear(hidden_size, output_size),
         )
 
-    def forward(self, features: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        features: torch.Tensor,
+        difficulty: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         encoded = self.encoder(features)
         encoded = encoded.transpose(1, 2)
+        if self.difficulty_embedding is not None:
+            if difficulty is None:
+                raise ValueError("difficulty is required by this checkpoint")
+            condition = self.difficulty_embedding(difficulty.long()).unsqueeze(1)
+            encoded = encoded + condition
         temporal, _ = self.temporal(encoded)
         return self.head(temporal)

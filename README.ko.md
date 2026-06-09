@@ -93,6 +93,32 @@ python3 scripts/train_chart_model.py \
   --epochs 20
 ```
 
+난이도 조건을 실제 모델 입력으로 사용하는 새 모델을 학습하려면 기존 100 epoch 가중치를 초기값으로 가져와 별도 체크포인트로 시작합니다.
+
+```bash
+.venv/bin/python -B scripts/train_chart_model.py \
+  --charts data/djmax_4b_charts.jsonl \
+  --audio-manifest data/audio_manifest.json \
+  --output checkpoints/djmax_4b_conditional.pt \
+  --init-from checkpoints/djmax_4b_baseline.pt \
+  --learning-rate 1e-4 \
+  --epochs 40
+```
+
+이 모델을 이어서 학습할 때만 `--resume`을 사용합니다.
+
+```bash
+.venv/bin/python -B scripts/train_chart_model.py \
+  --charts data/djmax_4b_charts.jsonl \
+  --audio-manifest data/audio_manifest.json \
+  --output checkpoints/djmax_4b_conditional.pt \
+  --learning-rate 1e-4 \
+  --epochs 80 \
+  --resume
+```
+
+새 학습 로그의 loss는 이전 모델과 라벨 정의가 달라 직접 비교할 수 없습니다. `tap_f1`, `hold_f1`, precision, recall도 함께 확인해야 합니다.
+
 중간에 멈춘 학습을 이어서 진행하려면:
 
 ```bash
@@ -213,6 +239,9 @@ http://127.0.0.1:8000/
 
 - `id`
 - `song_id`
+- `name`
+- `password_hash`
+- `key_bindings_json`
 - `chart_json`
 - `difficulty`
 - `tap_ratio`
@@ -224,3 +253,5 @@ http://127.0.0.1:8000/
 - `created_at`
 
 같은 YouTube 링크가 이미 저장되어 있으면 새로 다운로드하지 않고 DB에 저장된 곡과 채보 목록을 먼저 반환합니다. 저장된 채보가 있으면 프론트에서 첫 번째 채보를 바로 플레이할 수 있게 불러옵니다.
+
+새 채보를 만들 때 채보 이름, 관리 비밀번호, 4개 레인의 플레이 키를 설정합니다. 관리 비밀번호는 PBKDF2 해시로 저장되며 원문은 DB에 남지 않습니다. 채보 이름 변경과 삭제에는 생성할 때 입력한 비밀번호가 필요합니다. 마이그레이션 전에 생성된 기존 채보는 관리 비밀번호가 없으므로 이름 변경과 삭제가 잠깁니다.

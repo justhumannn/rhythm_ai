@@ -11,6 +11,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from rhythm_ai.audio import audio_to_features
+from rhythm_ai.chart import DIFFICULTY_TO_INDEX
 from rhythm_ai.model import ChartGenerator
 from rhythm_ai.postprocess import logits_to_chart_events
 
@@ -20,6 +21,11 @@ def main() -> int:
     parser.add_argument("--checkpoint", required=True, type=Path)
     parser.add_argument("--audio", required=True, type=Path)
     parser.add_argument("--title", required=True)
+    parser.add_argument(
+        "--difficulty",
+        choices=tuple(DIFFICULTY_TO_INDEX),
+        default="SC",
+    )
     parser.add_argument("--bpm", required=True, type=float)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--tap-threshold", type=float, default=0.45)
@@ -55,7 +61,15 @@ def main() -> int:
     ).unsqueeze(0)
 
     with torch.no_grad():
-        logits = model(features.to(device)).squeeze(0).cpu().numpy()
+        model_input = features.to(device)
+        if model.difficulty_count > 0:
+            difficulty = torch.tensor(
+                [DIFFICULTY_TO_INDEX[args.difficulty]],
+                device=device,
+            )
+            logits = model(model_input, difficulty).squeeze(0).cpu().numpy()
+        else:
+            logits = model(model_input).squeeze(0).cpu().numpy()
 
     events = logits_to_chart_events(
         logits,
@@ -72,7 +86,7 @@ def main() -> int:
     chart = {
         "title": args.title,
         "mode": "4B",
-        "difficulty": "AI",
+        "difficulty": args.difficulty,
         "bpm": {"min": args.bpm, "max": args.bpm},
         "noteCount": len(events),
         "events": events,
