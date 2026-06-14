@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: rhythm-ai
+    runtime: docker
+    plan: standard
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    maxShutdownDelaySeconds: 120
+    envVars:
+      - key: RHYTHM_ENV
+        value: production
+      - key: SUPABASE_DATABASE_URL
+        sync: false
+      - key: RHYTHM_STORAGE_DIR
+        value: /var/data
+      - key: RHYTHM_CHECKPOINT
+        value: /app/checkpoints/djmax_4b_aligned.pt
+      - key: YOUTUBE_MAX_DURATION_SECONDS
+        value: "600"
+      - key: YOUTUBE_MAX_FILESIZE_BYTES
+        value: "524288000"
+      - key: RHYTHM_MAX_CONCURRENT_JOBS
+        value: "1"
+      - key: DATABASE_POOL_SIZE
+        value: "5"
+      - key: DATABASE_MAX_OVERFLOW
+        value: "2"
+    disk:
+      name: rhythm-audio
+      mountPath: /var/data
+      sizeGB: 10

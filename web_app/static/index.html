@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rhythm AI</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="control-panel">
+        <div class="brand-row">
+          <div>
+            <h1>Rhythm AI</h1>
+            <p>유튜브 음원에서 4B 채보를 생성하고 바로 플레이합니다.</p>
+          </div>
+          <span id="statusBadge" class="status-badge">대기</span>
+        </div>
+
+        <form id="songForm" class="url-form">
+          <label for="youtubeUrl">YouTube 링크</label>
+          <div class="inline-row">
+            <input id="youtubeUrl" name="youtubeUrl" type="url" required placeholder="https://www.youtube.com/watch?v=..." />
+            <button type="submit">불러오기</button>
+          </div>
+        </form>
+
+        <div id="songInfo" class="song-info hidden">
+          <span class="label">선택된 곡</span>
+          <strong id="songTitle"></strong>
+        </div>
+
+        <section id="existingCharts" class="chart-list hidden">
+          <div class="section-title">저장된 채보</div>
+          <div id="chartButtons" class="chart-buttons"></div>
+        </section>
+
+        <form id="generateForm" class="settings-grid">
+          <label class="full-width">
+            채보 이름
+            <input id="chartNameInput" type="text" maxlength="160" required placeholder="내 채보" />
+          </label>
+
+          <label class="full-width">
+            관리 비밀번호
+            <input id="chartPassword" type="password" minlength="4" maxlength="128" required autocomplete="new-password" placeholder="이름 변경·삭제에 사용" />
+          </label>
+
+          <label>
+            난이도
+            <select id="difficulty">
+              <option value="easy">Easy</option>
+              <option value="normal">Normal</option>
+              <option value="hard" selected>Hard</option>
+              <option value="expert">Expert</option>
+            </select>
+          </label>
+
+          <label>
+            키 설정
+            <span class="fixed-mode">4B</span>
+          </label>
+
+          <fieldset class="key-binding-editor">
+            <legend>플레이 키</legend>
+            <button type="button" class="key-bind-button" data-lane="1">D</button>
+            <button type="button" class="key-bind-button" data-lane="2">F</button>
+            <button type="button" class="key-bind-button" data-lane="3">J</button>
+            <button type="button" class="key-bind-button" data-lane="4">K</button>
+          </fieldset>
+
+          <label>
+            탭 비율 <output id="tapRatioValue">55</output>
+            <input id="tapRatio" type="range" min="0" max="100" value="55" />
+          </label>
+
+          <label>
+            홀드 비율 <output id="holdRatioValue">60</output>
+            <input id="holdRatio" type="range" min="0" max="100" value="60" />
+          </label>
+
+          <button id="generateButton" type="submit" disabled>채보 생성</button>
+        </form>
+      </section>
+
+      <section class="game-panel">
+        <div class="hud">
+          <div>
+            <span class="label">채보</span>
+            <strong id="chartName">없음</strong>
+          </div>
+          <div>
+            <span class="label">점수</span>
+            <strong id="score">0</strong>
+          </div>
+          <div>
+            <span class="label">콤보</span>
+            <strong id="combo">0</strong>
+          </div>
+          <div class="speed-control">
+            <label>
+              속도 <output id="scrollSpeedValue">1.0x</output>
+              <input id="scrollSpeed" type="range" min="0.5" max="4" step="0.1" value="1" />
+            </label>
+          </div>
+          <button id="playButton" disabled>재생</button>
+        </div>
+        <canvas id="gameCanvas" width="640" height="820"></canvas>
+        <div class="key-guide">
+          <span data-key-guide="1">D</span>
+          <span data-key-guide="2">F</span>
+          <span data-key-guide="3">J</span>
+          <span data-key-guide="4">K</span>
+        </div>
+        <audio id="audioPlayer" preload="auto"></audio>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

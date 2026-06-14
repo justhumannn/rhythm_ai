@@ -4,4 +4,5 @@ numpy>=1.26
 fastapi>=0.115
 uvicorn[standard]>=0.30
 sqlalchemy>=2.0
+psycopg[binary]>=3.2
 yt-dlp>=2024.8.6

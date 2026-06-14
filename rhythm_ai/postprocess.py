@@ -20,6 +20,7 @@ def logits_to_chart_events(
     hold_thresholds: list[float] | tuple[float, ...] | None = None,
     min_tap_gap_seconds: float = 0.08,
     min_hold_seconds: float = 0.20,
+    beat_snap: float | None = None,
 ) -> list[dict]:
     probs = sigmoid(logits)
     tap_probs = probs[:, : len(LANES_4B)]
@@ -82,11 +83,37 @@ def logits_to_chart_events(
                 }
             )
 
+    if beat_snap is not None and beat_snap > 0:
+        events = snap_events_to_beat_grid(events, beat_snap, bpm)
     events = dedupe_same_lane_events(events)
     events = remove_same_lane_hold_overlaps(events)
     events = remove_taps_inside_holds(events)
     events.sort(key=lambda event: (event["beat"], event["lane"], event["type"]))
     return events
+
+
+def snap_events_to_beat_grid(
+    events: list[dict],
+    beat_snap: float,
+    bpm: float,
+) -> list[dict]:
+    snapped: list[dict] = []
+    for source in events:
+        event = dict(source)
+        start_beat = round(float(event["beat"]) / beat_snap) * beat_snap
+        event["beat"] = round(start_beat, 6)
+        event["timeSeconds"] = round(start_beat * 60.0 / bpm, 6)
+        if event["type"] == "hold":
+            end_beat = (
+                round(float(event["endBeat"]) / beat_snap) * beat_snap
+            )
+            if end_beat <= start_beat:
+                end_beat = start_beat + beat_snap
+            event["endBeat"] = round(end_beat, 6)
+            event["durationBeats"] = round(end_beat - start_beat, 6)
+            event["endTimeSeconds"] = round(end_beat * 60.0 / bpm, 6)
+        snapped.append(event)
+    return snapped
 
 
 def per_lane_thresholds(

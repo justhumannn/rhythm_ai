@@ -29,11 +29,11 @@ class AudioConfig:
         return self.hop_length / self.sample_rate
 
 
-def load_audio_manifest(path: str | Path) -> dict[str, str]:
+def load_audio_manifest(path: str | Path) -> dict[str, dict]:
     rows = json.loads(Path(path).read_text(encoding="utf-8"))
-    manifest: dict[str, str] = {}
+    manifest: dict[str, dict] = {}
     for row in rows:
-        manifest[normalize_title(row["title"])] = row["audio_path"]
+        manifest[normalize_title(row["title"])] = row
     return manifest
 
 
@@ -48,6 +48,8 @@ class ChartAudioDataset(Dataset):
         samples_per_epoch: int = 4096,
         balanced_difficulty: bool = True,
         tap_radius_frames: int = 1,
+        require_training_eligible: bool = False,
+        exclude_gameplay_audio: bool = False,
     ) -> None:
         self.audio_config = audio_config
         self.segment_frames = segment_frames
@@ -57,16 +59,33 @@ class ChartAudioDataset(Dataset):
         manifest = load_audio_manifest(audio_manifest_path)
 
         charts = load_jsonl(charts_path)
-        self.items: list[tuple[dict, str]] = []
+        self.items: list[tuple[dict, str, float]] = []
         for chart in charts:
-            audio_path = manifest.get(normalize_title(chart["title"]))
-            if audio_path:
-                self.items.append((chart, audio_path))
+            audio_row = manifest.get(normalize_title(chart["title"]))
+            if not audio_row:
+                continue
+            if require_training_eligible and not audio_row.get(
+                "training_eligible",
+                False,
+            ):
+                continue
+            if exclude_gameplay_audio and audio_row.get("source_gameplay_mode"):
+                continue
+            self.items.append(
+                (
+                    chart,
+                    audio_row["audio_path"],
+                    float(audio_row.get("audio_offset_seconds", 0.0)),
+                )
+            )
 
         if not self.items:
             raise ValueError("no chart/audio pairs matched; check audio_manifest.json")
 
-        self.items_by_difficulty: dict[int, list[tuple[dict, str]]] = {}
+        self.items_by_difficulty: dict[
+            int,
+            list[tuple[dict, str, float]],
+        ] = {}
         for item in self.items:
             difficulty_index = DIFFICULTY_TO_INDEX.get(item[0].get("difficulty"))
             if difficulty_index is not None:
@@ -80,7 +99,7 @@ class ChartAudioDataset(Dataset):
         self,
         index: int,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        chart, audio_path = self._sample_item()
+        chart, audio_path, audio_offset_seconds = self._sample_item()
         difficulty_index = DIFFICULTY_TO_INDEX.get(chart.get("difficulty"), 0)
         features = self._features(audio_path)
         labels = torch.from_numpy(
@@ -89,6 +108,7 @@ class ChartAudioDataset(Dataset):
                 frame_seconds=self.audio_config.frame_seconds,
                 duration_seconds=features.shape[1] * self.audio_config.frame_seconds,
                 tap_radius_frames=self.tap_radius_frames,
+                audio_offset_seconds=audio_offset_seconds,
             )
         )
 
@@ -110,7 +130,7 @@ class ChartAudioDataset(Dataset):
         labels = torch.nn.functional.pad(labels, (0, 0, 0, pad))
         return features, labels, torch.tensor(difficulty_index, dtype=torch.long)
 
-    def _sample_item(self) -> tuple[dict, str]:
+    def _sample_item(self) -> tuple[dict, str, float]:
         if self.balanced_difficulty and self.items_by_difficulty:
             difficulty = random.choice(tuple(self.items_by_difficulty))
             return random.choice(self.items_by_difficulty[difficulty])

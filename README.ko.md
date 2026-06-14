@@ -165,50 +165,54 @@ python3 scripts/create_audio_manifest.py \
 
 ### 학습
 
+유튜브 영상에서 추출한 음원은 영상마다 음악 시작 시점이 다를 수 있습니다. 학습 전에 오디오 onset과 채보를 비교해 곡별 시간 오프셋을 계산합니다. 이 과정에서 4B 학습에 맞지 않는 5B/6B/8B 게임플레이 음원과 BPM 변화 구간 정보가 없는 곡도 제외합니다.
+
 ```bash
-python3 scripts/train_chart_model.py \
+.venv/bin/python -B scripts/align_audio_manifest.py \
   --charts data/djmax_4b_charts.jsonl \
-  --audio-manifest data/audio_manifest.json \
-  --output checkpoints/djmax_4b_baseline.pt \
-  --epochs 20
+  --manifest data/audio_manifest.json \
+  --output data/audio_manifest_aligned.json
 ```
 
-난이도 조건을 실제 모델 입력으로 사용하는 새 모델을 학습하려면 기존 100 epoch 가중치를 초기값으로 가져와 별도 체크포인트로 시작합니다.
+정렬된 manifest에는 `audio_offset_seconds`, `alignment_score`, `training_eligible`, `training_exclusion_reasons`가 추가됩니다.
+
+기존 모델의 공통 가중치를 초기값으로 가져오되, 시간 정렬 라벨이 달라졌으므로 새 체크포인트로 학습합니다.
 
 ```bash
 .venv/bin/python -B scripts/train_chart_model.py \
   --charts data/djmax_4b_charts.jsonl \
-  --audio-manifest data/audio_manifest.json \
-  --output checkpoints/djmax_4b_conditional.pt \
-  --init-from checkpoints/djmax_4b_baseline.pt \
-  --learning-rate 1e-4 \
+  --audio-manifest data/audio_manifest_aligned.json \
+  --output checkpoints/djmax_4b_aligned.pt \
+  --init-from checkpoints/djmax_4b_conditional.pt \
+  --require-training-eligible \
+  --exclude-gameplay-audio \
+  --learning-rate 5e-5 \
+  --tap-pos-weight 3 \
+  --hold-pos-weight 3 \
+  --metric-tap-threshold 0.5 \
   --epochs 40
 ```
 
-이 모델을 이어서 학습할 때만 `--resume`을 사용합니다.
+이 모델을 이어서 학습할 때는 같은 정렬 manifest와 `--resume`을 사용합니다.
 
 ```bash
 .venv/bin/python -B scripts/train_chart_model.py \
   --charts data/djmax_4b_charts.jsonl \
-  --audio-manifest data/audio_manifest.json \
-  --output checkpoints/djmax_4b_conditional.pt \
-  --learning-rate 1e-4 \
+  --audio-manifest data/audio_manifest_aligned.json \
+  --output checkpoints/djmax_4b_aligned.pt \
+  --require-training-eligible \
+  --exclude-gameplay-audio \
+  --learning-rate 5e-5 \
+  --tap-pos-weight 3 \
+  --hold-pos-weight 3 \
+  --metric-tap-threshold 0.5 \
   --epochs 80 \
   --resume
 ```
 
-새 학습 로그의 loss는 이전 모델과 라벨 정의가 달라 직접 비교할 수 없습니다. `tap_f1`, `hold_f1`, precision, recall도 함께 확인해야 합니다.
+`--exclude-gameplay-audio`는 파일명에서 키 모드가 확인되는 게임플레이 영상 음원을 제외합니다. 게임 키음이 섞인 입력은 정답 노드 정보를 미리 포함하거나 다른 난이도의 키음과 충돌하므로, 새 곡의 순수 음원으로 일반화할 모델에는 사용하지 않는 것이 좋습니다.
 
-중간에 멈춘 학습을 이어서 진행하려면:
-
-```bash
-python3 scripts/train_chart_model.py \
-  --charts data/djmax_4b_charts.jsonl \
-  --audio-manifest data/audio_manifest.json \
-  --output checkpoints/djmax_4b_baseline.pt \
-  --epochs 20 \
-  --resume
-```
+정렬 후 loss는 이전 모델과 라벨 정의가 달라 직접 비교할 수 없습니다. `tap_f1`, `hold_f1`, precision, recall도 함께 확인해야 합니다. 탭 로그에는 `0.40~0.70` 범위에서 가장 높은 F1과 임계값이 `tap_best_f1=...@...` 형식으로 출력됩니다.
 
 ### 새 곡 채보 생성
 
@@ -272,8 +276,11 @@ python3 scripts/evaluate_chart.py \
 python3 scripts/evaluate_chart.py \
   --chart generated/example_4b.json \
   --reference-title "#1f1e33" \
-  --reference-difficulty SC
+  --reference-difficulty SC \
+  --timing-tolerance-beats 0.125
 ```
+
+레퍼런스를 지정하면 노트 수와 밀도뿐 아니라 같은 lane의 노드가 허용 박자 오차 안에서 일치하는지 `timingMatch` precision/recall/F1도 출력합니다. 생성 품질을 판단할 때는 전체 노트 수보다 `timingMatch.tap.f1`을 우선 확인합니다.
 
 원본 데이터셋 전체 통계를 생성합니다.
 
@@ -287,6 +294,20 @@ python3 scripts/evaluate_chart.py \
 ## 웹 서비스
 
 FastAPI, SQLAlchemy, SQLite 기반의 로컬 웹앱입니다. 사용자가 YouTube 링크를 넣으면 WAV를 저장하고, WAV를 분석해 BPM을 자동 측정한 뒤 설정값을 바탕으로 4B 채보를 생성합니다. 생성된 채보는 브라우저에서 바로 플레이할 수 있습니다.
+
+### BPM 분석
+
+BPM 분석은 전체 음원과 20초 단위 여러 구간을 함께 검사합니다. DJMAX 데이터에 등록된 곡은 유튜브 제목과 오디오 후보를 교차 확인해 공식 BPM을 사용하며, 그 외 곡은 분석 BPM과 신뢰도, 반박/두배박 후보를 저장합니다. 웹 화면에는 BPM 신뢰도와 배수박 모호성 여부가 표시됩니다.
+
+WAV 파일만 따로 분석하려면:
+
+```bash
+.venv/bin/python -B scripts/analyze_bpm.py \
+  --audio "audio/example.wav" \
+  --title "곡 제목"
+```
+
+출력의 `source`가 `djmax_catalog`이면 DJMAX 채보 데이터와 오디오 분석이 함께 사용된 값이며, `audio_analysis`이면 오디오만으로 측정한 값입니다. `ambiguous`가 `true`이면 표시 BPM의 절반 또는 두 배도 강한 후보라는 뜻입니다.
 
 ### 실행
 
@@ -335,3 +356,44 @@ http://127.0.0.1:8000/
 같은 YouTube 링크가 이미 저장되어 있으면 새로 다운로드하지 않고 DB에 저장된 곡과 채보 목록을 먼저 반환합니다. 저장된 채보가 있으면 프론트에서 첫 번째 채보를 바로 플레이할 수 있게 불러옵니다.
 
 새 채보를 만들 때 채보 이름, 관리 비밀번호, 4개 레인의 플레이 키를 설정합니다. 관리 비밀번호는 PBKDF2 해시로 저장되며 원문은 DB에 남지 않습니다. 채보 이름 변경과 삭제에는 생성할 때 입력한 비밀번호가 필요합니다. 마이그레이션 전에 생성된 기존 채보는 관리 비밀번호가 없으므로 이름 변경과 삭제가 잠깁니다.
+
+## 클라우드 배포
+
+초기 공개 배포는 Render의 Docker Web Service, Supabase PostgreSQL, Persistent Disk 조합을 기준으로 구성되어 있습니다.
+
+- `Dockerfile`: Python 3.12, CPU용 PyTorch, ffmpeg를 설치합니다.
+- `render.yaml`: 웹 서비스와 10GB 음원 디스크를 생성하고 Supabase 연결 문자열을 secret으로 받습니다.
+- 로컬에서는 `RHYTHM_ENV=local`과 `DATABASE_URL`로 SQLite를 SQLAlchemy에서 사용합니다.
+- 외부 배포에서는 `RHYTHM_ENV=production`과 `SUPABASE_DATABASE_URL`로 Supabase PostgreSQL을 SQLAlchemy에서 사용합니다.
+- `RHYTHM_STORAGE_DIR`: 다운로드한 WAV를 저장할 영구 디스크 경로입니다.
+- `/healthz`: DB 연결, 체크포인트, 저장 경로 상태를 확인합니다.
+
+Render에서 배포하는 순서:
+
+1. Supabase 프로젝트를 만들고 Dashboard의 **Connect**에서 Session Pooler 연결 문자열을 준비합니다.
+2. 변경 사항과 최신 모델인 `checkpoints/djmax_4b_aligned.pt`를 `justhumannn/rhythm_ai` 저장소에 push합니다.
+3. Render Dashboard에서 **New > Blueprint**를 선택합니다.
+4. GitHub의 `justhumannn/rhythm_ai` 저장소를 연결합니다.
+5. 저장소 루트의 `render.yaml`을 적용합니다.
+6. Blueprint 설정 중 `SUPABASE_DATABASE_URL`에 Session Pooler 연결 문자열을 입력합니다. 비밀번호에 특수문자가 있으면 URL 인코딩하고 문자열 끝에 `?sslmode=require`를 붙입니다.
+7. 배포가 끝나면 `https://서비스주소/healthz`에서 `status: ok`, `checkpoint: true`를 확인합니다.
+
+현재 Blueprint는 싱가포르 리전, `standard` 웹 서비스와 10GB 디스크를 사용합니다. PyTorch 추론과 영구 디스크 때문에 무료 웹 서비스만으로는 운영할 수 없습니다.
+
+로컬에서 배포 이미지를 확인하려면:
+
+```bash
+docker build -t rhythm-ai:local .
+docker run --rm -p 8000:8000 \
+  -e RHYTHM_STORAGE_DIR=/var/data \
+  rhythm-ai:local
+```
+
+환경변수 예시는 `.env.example`에 있습니다. 공개 서비스 보호를 위해 YouTube 링크만 허용하고, 기본 영상 길이는 10분, 파일 크기는 500MB로 제한하며, 다운로드와 AI 생성 작업은 동시에 하나만 실행합니다.
+
+주의사항:
+
+- Render의 일반 파일시스템은 재배포 시 초기화되므로 WAV는 반드시 `/var/data` Persistent Disk에 저장해야 합니다.
+- Persistent Disk가 연결된 서비스는 단일 인스턴스로 운영됩니다. 사용량이 늘면 WAV를 S3/R2 같은 객체 저장소로 옮기고 API와 생성 worker를 분리해야 합니다.
+- 로컬 SQLite 데이터와 `audio/web` 파일은 자동 이전되지 않습니다. 외부 배포는 연결한 Supabase DB와 빈 음원 디스크로 시작합니다.
+- 클라우드 사업자 IP에서 YouTube 다운로드가 차단될 수 있습니다. 이 경우 사용자가 직접 음원을 업로드하거나 별도의 다운로드 worker를 두는 방식이 필요합니다.

@@ -2,18 +2,16 @@ __pycache__/
 *.pyc
 
 audio/
-checkpoints/
+checkpoints/*
+!checkpoints/djmax_4b_aligned.pt
 generated/
 demo/
 
 data/audio_manifest.json
+data/audio_manifest_aligned.json
 data/missing_audio_queries.txt
 data/rhythm_web.sqlite
 data/youtube_search_results.csv
 data/youtube_search_results.json
 
 scripts/search_youtube_links.py
-
-web_app/
-
-youtube_to_wav.py

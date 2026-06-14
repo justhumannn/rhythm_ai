@@ -181,7 +181,14 @@ def warnings_for_chart(
     return warnings
 
 
-def compare_metrics(candidate: dict, reference: dict) -> dict:
+def compare_metrics(
+    candidate: dict,
+    reference: dict,
+    *,
+    candidate_chart: dict | None = None,
+    reference_chart: dict | None = None,
+    timing_tolerance_beats: float = 0.125,
+) -> dict:
     comparable = [
         "noteCount",
         "tapCount",
@@ -207,7 +214,114 @@ def compare_metrics(candidate: dict, reference: dict) -> dict:
             candidate["laneRatios"][lane] - reference["laneRatios"][lane], 6
         )
     diff["laneRatioDelta"] = lane_delta
+    if candidate_chart is not None and reference_chart is not None:
+        diff["timingMatch"] = compare_event_timing(
+            candidate_chart,
+            reference_chart,
+            tolerance_beats=timing_tolerance_beats,
+        )
     return diff
+
+
+def compare_event_timing(
+    candidate: dict,
+    reference: dict,
+    *,
+    tolerance_beats: float,
+) -> dict:
+    return {
+        "toleranceBeats": tolerance_beats,
+        "all": match_events(
+            candidate.get("events", []),
+            reference.get("events", []),
+            tolerance_beats=tolerance_beats,
+        ),
+        "tap": match_events(
+            [
+                event
+                for event in candidate.get("events", [])
+                if event["type"] == "tap"
+            ],
+            [
+                event
+                for event in reference.get("events", [])
+                if event["type"] == "tap"
+            ],
+            tolerance_beats=tolerance_beats,
+        ),
+        "hold": match_events(
+            [
+                event
+                for event in candidate.get("events", [])
+                if event["type"] == "hold"
+            ],
+            [
+                event
+                for event in reference.get("events", [])
+                if event["type"] == "hold"
+            ],
+            tolerance_beats=tolerance_beats,
+        ),
+    }
+
+
+def match_events(
+    candidate_events: list[dict],
+    reference_events: list[dict],
+    *,
+    tolerance_beats: float,
+) -> dict:
+    true_positive = 0
+    absolute_errors: list[float] = []
+
+    for lane in LANES_4B:
+        candidate_beats = sorted(
+            float(event["beat"])
+            for event in candidate_events
+            if str(event["lane"]) == lane
+        )
+        reference_beats = sorted(
+            float(event["beat"])
+            for event in reference_events
+            if str(event["lane"]) == lane
+        )
+        candidate_index = 0
+        reference_index = 0
+        while (
+            candidate_index < len(candidate_beats)
+            and reference_index < len(reference_beats)
+        ):
+            candidate_beat = candidate_beats[candidate_index]
+            reference_beat = reference_beats[reference_index]
+            error = candidate_beat - reference_beat
+            if abs(error) <= tolerance_beats:
+                true_positive += 1
+                absolute_errors.append(abs(error))
+                candidate_index += 1
+                reference_index += 1
+            elif candidate_beat < reference_beat:
+                candidate_index += 1
+            else:
+                reference_index += 1
+
+    false_positive = len(candidate_events) - true_positive
+    false_negative = len(reference_events) - true_positive
+    precision = true_positive / max(1, true_positive + false_positive)
+    recall = true_positive / max(1, true_positive + false_negative)
+    f1 = 2 * precision * recall / max(1e-9, precision + recall)
+    return {
+        "matched": true_positive,
+        "falsePositive": false_positive,
+        "falseNegative": false_negative,
+        "precision": round(precision, 6),
+        "recall": round(recall, 6),
+        "f1": round(f1, 6),
+        "meanAbsoluteBeatError": (
+            round(statistics.mean(absolute_errors), 6)
+            if absolute_errors
+            else None
+        ),
+    }
 
 
 def find_reference(charts: list[dict], title: str, difficulty: str | None) -> dict | None:
@@ -245,6 +359,7 @@ def main() -> int:
     parser.add_argument("--reference-jsonl", type=Path, default=Path("data/djmax_4b_charts.jsonl"))
     parser.add_argument("--reference-title")
     parser.add_argument("--reference-difficulty")
+    parser.add_argument("--timing-tolerance-beats", type=float, default=0.125)
     parser.add_argument("--window-beats", type=float, default=4.0)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--format", choices=["human", "json"], default="human")
@@ -269,6 +384,9 @@ def main() -> int:
             comparison = compare_metrics(
                 metrics,
                 evaluate_chart(reference_chart, window_beats=args.window_beats),
+                candidate_chart=chart,
+                reference_chart=reference_chart,
+                timing_tolerance_beats=args.timing_tolerance_beats,
             )
         payload = {"metrics": metrics, "comparison": comparison}
     else:

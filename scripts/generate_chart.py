@@ -42,6 +42,12 @@ def main() -> int:
     )
     parser.add_argument("--min-tap-gap-seconds", type=float, default=0.08)
     parser.add_argument("--min-hold-seconds", type=float, default=0.20)
+    parser.add_argument(
+        "--beat-snap",
+        type=float,
+        default=0.125,
+        help="snap generated events to this beat grid; use 0 to disable",
+    )
     parser.add_argument("--device", default="auto")
     args = parser.parse_args()
 
@@ -81,6 +87,7 @@ def main() -> int:
         hold_thresholds=args.hold_thresholds,
         min_tap_gap_seconds=args.min_tap_gap_seconds,
         min_hold_seconds=args.min_hold_seconds,
+        beat_snap=args.beat_snap,
     )
 
     chart = {
@@ -98,6 +105,7 @@ def main() -> int:
             "holdThresholds": args.hold_thresholds,
             "minTapGapSeconds": args.min_tap_gap_seconds,
             "minHoldSeconds": args.min_hold_seconds,
+            "beatSnap": args.beat_snap,
         },
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)

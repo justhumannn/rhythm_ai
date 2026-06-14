@@ -15,6 +15,9 @@ from rhythm_ai.dataset import AudioConfig, ChartAudioDataset
 from rhythm_ai.model import ChartGenerator
 
 
+TAP_METRIC_THRESHOLDS = (0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Train a DJMAX 4B chart model.")
     parser.add_argument("--charts", default="data/djmax_4b_charts.jsonl")
@@ -32,6 +35,30 @@ def main() -> int:
     parser.add_argument("--hidden-size", type=int, default=192)
     parser.add_argument("--tap-radius-frames", type=int, default=1)
     parser.add_argument(
+        "--tap-pos-weight",
+        type=float,
+        default=3.0,
+        help="positive-class loss weight for tap lanes; lower values reduce false taps",
+    )
+    parser.add_argument(
+        "--hold-pos-weight",
+        type=float,
+        default=3.0,
+        help="positive-class loss weight for hold lanes",
+    )
+    parser.add_argument(
+        "--metric-tap-threshold",
+        type=float,
+        default=0.5,
+        help="tap probability threshold used only for training metrics",
+    )
+    parser.add_argument(
+        "--metric-hold-threshold",
+        type=float,
+        default=0.5,
+        help="hold probability threshold used only for training metrics",
+    )
+    parser.add_argument(
         "--init-from",
         type=Path,
         help="initialize shared weights from an older checkpoint without resuming its optimizer",
@@ -41,6 +68,16 @@ def main() -> int:
         action="store_true",
         help="sample charts uniformly instead of balancing NM/HD/MX/SC",
     )
+    parser.add_argument(
+        "--require-training-eligible",
+        action="store_true",
+        help="only use rows marked training_eligible in an aligned manifest",
+    )
+    parser.add_argument(
+        "--exclude-gameplay-audio",
+        action="store_true",
+        help="exclude audio filenames identified as 4B/5B/6B/8B gameplay videos",
+    )
     parser.add_argument("--device", default="auto")
     parser.add_argument(
         "--resume",
@@ -48,6 +85,12 @@ def main() -> int:
         help="resume from --output if the checkpoint exists",
     )
     args = parser.parse_args()
+    if args.tap_pos_weight <= 0 or args.hold_pos_weight <= 0:
+        parser.error("positive-class weights must be greater than zero")
+    if not 0 < args.metric_tap_threshold < 1:
+        parser.error("--metric-tap-threshold must be between 0 and 1")
+    if not 0 < args.metric_hold_threshold < 1:
+        parser.error("--metric-hold-threshold must be between 0 and 1")
 
     device = resolve_device(args.device)
     audio_config = AudioConfig(
@@ -64,6 +107,8 @@ def main() -> int:
         samples_per_epoch=args.samples_per_epoch,
         balanced_difficulty=not args.unbalanced_difficulty,
         tap_radius_frames=args.tap_radius_frames,
+        require_training_eligible=args.require_training_eligible,
+        exclude_gameplay_audio=args.exclude_gameplay_audio,
     )
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False)
 
@@ -76,7 +121,12 @@ def main() -> int:
     }
     model = ChartGenerator(**model_config).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
-    loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([8, 8, 8, 8, 3, 3, 3, 3], device=device))
+    loss_fn = nn.BCEWithLogitsLoss(
+        pos_weight=torch.tensor(
+            [args.tap_pos_weight] * 4 + [args.hold_pos_weight] * 4,
+            device=device,
+        )
+    )
 
     start_epoch = 1
     if args.resume and args.output.exists():
@@ -86,6 +136,8 @@ def main() -> int:
                 "use a new --output with --init-from checkpoints/djmax_4b_baseline.pt"
             )
         start_epoch = load_checkpoint(args.output, model, optimizer, device) + 1
+        for param_group in optimizer.param_groups:
+            param_group["lr"] = args.learning_rate
         print(f"resuming from epoch={start_epoch}")
     elif args.init_from:
         initialize_from_checkpoint(args.init_from, model, device)
@@ -98,6 +150,9 @@ def main() -> int:
         model.train()
         total_loss = 0.0
         tap_counts = BinaryCounts()
+        tap_sweep_counts = {
+            threshold: BinaryCounts() for threshold in TAP_METRIC_THRESHOLDS
+        }
         hold_counts = BinaryCounts()
         for features, labels, difficulty in loader:
             features = features.to(device)
@@ -111,18 +166,35 @@ def main() -> int:
             optimizer.step()
             total_loss += float(loss.detach().cpu())
             with torch.no_grad():
-                predictions = torch.sigmoid(logits) >= 0.5
+                probabilities = torch.sigmoid(logits)
                 targets = labels >= 0.5
-                tap_counts.update(predictions[..., :4], targets[..., :4])
-                hold_counts.update(predictions[..., 4:], targets[..., 4:])
+                tap_counts.update(
+                    probabilities[..., :4] >= args.metric_tap_threshold,
+                    targets[..., :4],
+                )
+                for threshold, counts in tap_sweep_counts.items():
+                    counts.update(
+                        probabilities[..., :4] >= threshold,
+                        targets[..., :4],
+                    )
+                hold_counts.update(
+                    probabilities[..., 4:] >= args.metric_hold_threshold,
+                    targets[..., 4:],
+                )
 
         avg_loss = total_loss / max(1, len(loader))
+        best_tap_threshold, best_tap_counts = max(
+            tap_sweep_counts.items(),
+            key=lambda item: item[1].f1(),
+        )
         print(
             f"epoch={epoch} loss={avg_loss:.5f} "
             f"tap_f1={tap_counts.f1():.4f} tap_p={tap_counts.precision():.4f} "
             f"tap_r={tap_counts.recall():.4f} "
+            f"tap_best_f1={best_tap_counts.f1():.4f}@{best_tap_threshold:.2f} "
             f"hold_f1={hold_counts.f1():.4f} hold_p={hold_counts.precision():.4f} "
-            f"hold_r={hold_counts.recall():.4f}"
+            f"hold_r={hold_counts.recall():.4f} "
+            f"thresholds={args.metric_tap_threshold:.2f}/{args.metric_hold_threshold:.2f}"
         )
         save_checkpoint(args.output, model, optimizer, audio_config, args, epoch, avg_loss)
 
@@ -171,6 +243,12 @@ def save_checkpoint(
             "training_config": {
                 "tap_radius_frames": args.tap_radius_frames,
                 "balanced_difficulty": not args.unbalanced_difficulty,
+                "tap_pos_weight": args.tap_pos_weight,
+                "hold_pos_weight": args.hold_pos_weight,
+                "metric_tap_threshold": args.metric_tap_threshold,
+                "metric_hold_threshold": args.metric_hold_threshold,
+                "require_training_eligible": args.require_training_eligible,
+                "exclude_gameplay_audio": args.exclude_gameplay_audio,
             },
         },
         path,

@@ -1,0 +1,17 @@
+.git
+.idea
+.venv
+__pycache__
+*.pyc
+
+audio
+generated
+demo
+
+data/*.sqlite
+data/audio_manifest*.json
+data/missing_audio_queries.txt
+data/youtube_search_results.*
+
+checkpoints/*
+!checkpoints/djmax_4b_aligned.pt
