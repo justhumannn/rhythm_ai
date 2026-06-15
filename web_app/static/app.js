@@ -546,9 +546,36 @@ function escapeHtml(value) {
 }
 
 async function readJsonResponse(response) {
-  const data = await response.json();
+  const contentType = response.headers.get("content-type") || "";
+  const body = await response.text();
+  let data = null;
+
+  if (body && contentType.includes("application/json")) {
+    try {
+      data = JSON.parse(body);
+    } catch {
+      throw new Error(
+        `서버가 올바르지 않은 JSON을 반환했습니다. (HTTP ${response.status})`
+      );
+    }
+  }
+
   if (!response.ok) {
-    throw new Error(data.detail || "요청에 실패했습니다.");
+    const detail = data?.detail;
+    if (detail) {
+      throw new Error(detail);
+    }
+    if (response.status === 502 || response.status === 503) {
+      throw new Error(
+        `배포 서버가 실행 중이 아닙니다. Render 배포 로그를 확인해 주세요. (HTTP ${response.status})`
+      );
+    }
+    throw new Error(`서버 요청에 실패했습니다. (HTTP ${response.status})`);
+  }
+  if (data === null) {
+    throw new Error(
+      `서버가 JSON 대신 빈 응답 또는 HTML을 반환했습니다. (HTTP ${response.status})`
+    );
   }
   return data;
 }
