@@ -401,3 +401,22 @@ docker run --rm -p 8000:8000 \
 - 플레이할 때는 1시간짜리 signed URL을 발급하고, AI 생성 시에는 임시 파일로 내려받은 뒤 즉시 삭제합니다.
 - 기존 Persistent Disk나 로컬 `audio/web` 파일은 자동 이전되지 않습니다. 기존 DB의 로컬 파일 경로도 별도 마이그레이션이 필요합니다.
 - 클라우드 사업자 IP에서 YouTube 다운로드가 차단될 수 있습니다. 이 경우 사용자가 직접 음원을 업로드하거나 별도의 다운로드 worker를 두는 방식이 필요합니다.
+
+### Render에서 YouTube 봇 확인 오류 해결
+
+Render 같은 데이터센터 IP는 YouTube에서 `Sign in to confirm you're not a bot` 오류로 차단될 수 있습니다. 이 경우 브라우저 쿠키를 GitHub에 커밋하거나 일반 환경변수에 붙여 넣지 말고 Render의 Secret File을 사용합니다.
+
+1. 로컬 브라우저에서 YouTube에 로그인합니다. 주 계정보다는 이 서비스 전용 계정을 권장합니다.
+2. 로컬에서 최신 `yt-dlp`로 Netscape 형식 쿠키 파일을 생성합니다.
+
+```bash
+yt-dlp --cookies-from-browser chrome --cookies youtube-cookies.txt
+```
+
+Firefox를 사용한다면 `chrome` 대신 `firefox`를 사용합니다. 이 명령은 브라우저의 다른 사이트 쿠키도 함께 내보낼 수 있으므로 파일 내용을 확인하고 YouTube/Google 관련 행만 남긴 뒤 안전하게 보관합니다.
+
+3. Render 서비스의 **Environment > Secret Files > Add Secret File**을 선택합니다.
+4. Filename을 `youtube-cookies.txt`로 지정하고 파일 내용을 붙여 넣습니다.
+5. 저장하고 재배포합니다. Docker 서비스에서는 파일이 `/etc/secrets/youtube-cookies.txt`에 생성되며 앱이 자동으로 사용합니다.
+
+쿠키 파일 첫 줄은 `# Netscape HTTP Cookie File` 또는 `# HTTP Cookie File`이어야 합니다. 쿠키는 만료되거나 YouTube에서 무효화될 수 있으므로 같은 오류가 다시 발생하면 새로 내보내 교체해야 합니다. 쿠키 파일은 계정 접근 권한을 포함하므로 절대 GitHub에 올리지 마세요.
