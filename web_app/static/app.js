@@ -184,8 +184,13 @@ async function applySongBpm({ manageBusy }) {
     const song = await postJson(`/api/songs/${state.song.id}/bpm`, { bpm });
     state.song = song;
     renderSongBpm(song);
+    renderChartButtons(song.charts);
+    if (state.chart) {
+      clearChart();
+    }
     manualBpm.value = "";
-    setStatus(bpm === null ? "BPM 분석됨" : "BPM 적용됨");
+    setStatus(bpm === null ? "BPM 재분석됨" : "BPM 적용됨");
+    songBpm.textContent += " · 새 채보부터 적용";
     return song;
   } finally {
     if (manageBusy) {

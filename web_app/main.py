@@ -167,7 +167,9 @@ def update_song_bpm(
         try:
             with heavy_job_slot():
                 with materialize_audio(song.wav_path) as audio_path:
-                    analysis = analyze_bpm(audio_path, title=song.title)
+                    # A manual reanalysis must inspect the WAV itself instead of
+                    # reusing the DJMAX title catalog value.
+                    analysis = analyze_bpm(audio_path)
         except HTTPException:
             raise
         except Exception as exc:
