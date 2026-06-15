@@ -122,7 +122,11 @@ def analyze_bpm(
         ambiguous=ambiguous,
         local_bpm_median=local_median,
         local_bpm_spread=local_spread,
-        candidates=candidates,
+        candidates=include_candidate(
+            candidates,
+            selected,
+            candidate_support(raw_candidates, selected),
+        ),
     )
 
 
@@ -256,10 +260,24 @@ def select_canonical_tempo(
         if max(min_bpm, 70.0) <= bpm <= min(max_bpm, 220.0)
     ]
     score, bpm = preferred[0] if preferred else scores[0]
+    harmonic_candidates: list[tuple[float, float]] = []
     if bpm < 110.0 and bpm * 2.0 <= max_bpm:
-        doubled_score = score_near(scores, bpm * 2.0)
+        doubled_bpm = bpm * 2.0
+        doubled_score = score_near(scores, doubled_bpm)
         if doubled_score >= score * 0.68:
-            bpm *= 2.0
+            harmonic_candidates.append((doubled_score, doubled_bpm))
+
+    # Fast rhythm-game tracks frequently produce a strong one-third-tempo pulse.
+    # Only promote it from the very low band and require substantial direct support
+    # so genuinely slow songs are not multiplied without evidence.
+    if bpm < 80.0 and bpm * 3.0 <= max_bpm:
+        tripled_bpm = bpm * 3.0
+        tripled_score = score_near(scores, tripled_bpm)
+        if tripled_score >= score * 0.72:
+            harmonic_candidates.append((tripled_score, tripled_bpm))
+
+    if harmonic_candidates:
+        _, bpm = max(harmonic_candidates)
     return float(bpm)
 
 
