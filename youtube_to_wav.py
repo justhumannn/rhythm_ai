@@ -30,7 +30,7 @@ def download_youtube_as_wav(video_url, output_path="."):
     cookie_source = resolve_cookie_file()
 
     ydl_opts = {
-        "format": "bestaudio/best",
+        "format": "bestaudio/best[acodec!=none]/best",
         "outtmpl": os.path.join(str(output_dir), "%(id)s.%(ext)s"),
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
@@ -74,6 +74,11 @@ def download_youtube_as_wav(video_url, output_path="."):
                 "YouTube가 Render 서버의 요청을 차단했습니다. "
                 "Render Environment의 Secret Files에 Netscape 형식 쿠키를 "
                 "'youtube-cookies.txt' 이름으로 등록한 뒤 다시 배포해 주세요."
+            ) from exc
+        if "requested format is not available" in message.casefold():
+            raise RuntimeError(
+                "YouTube 오디오 형식 정보를 가져오지 못했습니다. "
+                "서버의 yt-dlp JavaScript 런타임을 확인하거나 쿠키를 갱신해 주세요."
             ) from exc
         print(f"에러가 발생했습니다: {exc}")
         raise

@@ -420,3 +420,5 @@ Firefox를 사용한다면 `chrome` 대신 `firefox`를 사용합니다. 이 명
 5. 저장하고 재배포합니다. Docker 서비스에서는 파일이 `/etc/secrets/youtube-cookies.txt`에 생성되며 앱이 자동으로 사용합니다.
 
 쿠키 파일 첫 줄은 `# Netscape HTTP Cookie File` 또는 `# HTTP Cookie File`이어야 합니다. 쿠키는 만료되거나 YouTube에서 무효화될 수 있으므로 같은 오류가 다시 발생하면 새로 내보내 교체해야 합니다. 쿠키 파일은 계정 접근 권한을 포함하므로 절대 GitHub에 올리지 마세요.
+
+배포 Docker 이미지에는 YouTube의 JavaScript 챌린지를 처리하기 위한 Deno와 `yt-dlp-ejs`가 포함됩니다. `Requested format is not available` 오류가 발생하면 최신 커밋으로 Docker 이미지를 캐시 없이 다시 배포했는지 확인하세요.
