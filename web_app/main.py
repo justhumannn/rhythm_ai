@@ -13,10 +13,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from web_app.bpm import analyze_bpm
 from web_app.chart_generator import chart_from_json, chart_to_json, generate_chart
 from web_app.database import Base, SessionLocal, engine
 from web_app.migrations import migrate_database
+from web_app.model_service import generate_chart_remotely, model_service_enabled
 from web_app.models import Chart, Song
 from web_app.security import hash_password, verify_password
 from web_app.storage import (
@@ -89,14 +89,17 @@ def index():
 @app.get("/healthz")
 def healthcheck(db: Session = Depends(get_db)):
     db.execute(text("SELECT 1"))
-    checkpoint = os.environ.get(
-        "RHYTHM_CHECKPOINT",
-        ROOT / "checkpoints" / "djmax_4b_aligned.pt",
-    )
+    checkpoint = None
+    if not model_service_enabled():
+        checkpoint = os.environ.get(
+            "RHYTHM_CHECKPOINT",
+            ROOT / "checkpoints" / "djmax_4b_aligned.pt",
+        )
     return {
         "status": "ok",
         "database": "ok",
-        "checkpoint": Path(checkpoint).exists(),
+        "model_service": model_service_enabled(),
+        "checkpoint": None if checkpoint is None else Path(checkpoint).exists(),
         "storage": storage_status(),
     }
 
@@ -169,6 +172,8 @@ def update_song_bpm(
                 with materialize_audio(song.wav_path) as audio_path:
                     # A manual reanalysis must inspect the WAV itself instead of
                     # reusing the DJMAX title catalog value.
+                    from web_app.bpm import analyze_bpm
+
                     analysis = analyze_bpm(audio_path)
         except HTTPException:
             raise
@@ -204,24 +209,41 @@ def create_chart(payload: GenerateRequest, db: Session = Depends(get_db)):
     try:
         with heavy_job_slot():
             with materialize_audio(song.wav_path) as audio_path:
-                if song.bpm is None:
-                    bpm_analysis = analyze_bpm(audio_path, title=song.title)
-                    analysis_data = bpm_analysis.to_dict()
-                    apply_bpm_analysis(song, analysis_data)
-                    db.commit()
+                if model_service_enabled():
+                    chart_data, thresholds, analysis_data = generate_chart_remotely(
+                        audio_path=audio_path,
+                        title=song.title,
+                        bpm=song.bpm,
+                        difficulty=payload.difficulty,
+                        tap_ratio=payload.tap_ratio,
+                        hold_ratio=payload.hold_ratio,
+                        key_count=payload.key_count,
+                    )
+                    if song.bpm is None and analysis_data.get("bpm") is not None:
+                        apply_bpm_analysis(song, analysis_data)
+                        db.commit()
+                    bpm = float(chart_data.get("bpm", {}).get("max") or song.bpm)
                 else:
-                    analysis_data = stored_bpm_analysis(song)
-                bpm = float(song.bpm)
-                chart_data, thresholds = generate_chart(
-                    audio_path=audio_path,
-                    title=song.title,
-                    bpm=bpm,
-                    difficulty=payload.difficulty,
-                    tap_ratio=payload.tap_ratio,
-                    hold_ratio=payload.hold_ratio,
-                    key_count=payload.key_count,
-                )
-            chart_data["generator"]["bpmAnalysis"] = analysis_data
+                    from web_app.bpm import analyze_bpm
+
+                    if song.bpm is None:
+                        bpm_analysis = analyze_bpm(audio_path, title=song.title)
+                        analysis_data = bpm_analysis.to_dict()
+                        apply_bpm_analysis(song, analysis_data)
+                        db.commit()
+                    else:
+                        analysis_data = stored_bpm_analysis(song)
+                    bpm = float(song.bpm)
+                    chart_data, thresholds = generate_chart(
+                        audio_path=audio_path,
+                        title=song.title,
+                        bpm=bpm,
+                        difficulty=payload.difficulty,
+                        tap_ratio=payload.tap_ratio,
+                        hold_ratio=payload.hold_ratio,
+                        key_count=payload.key_count,
+                    )
+            chart_data.setdefault("generator", {})["bpmAnalysis"] = analysis_data
     except HTTPException:
         raise
     except Exception as exc:

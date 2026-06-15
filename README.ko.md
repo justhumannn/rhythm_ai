@@ -367,6 +367,8 @@ http://127.0.0.1:8000/
 - 외부 배포에서는 `RHYTHM_ENV=production`과 `SUPABASE_DATABASE_URL`로 Supabase PostgreSQL을 SQLAlchemy에서 사용합니다.
 - 로컬에서는 `RHYTHM_STORAGE_BACKEND=local`로 WAV를 `RHYTHM_STORAGE_DIR`에 저장합니다.
 - 운영에서는 `RHYTHM_STORAGE_BACKEND=supabase`로 private Storage bucket에 WAV를 저장합니다.
+- `AI_SERVICE_URL`이 설정되어 있으면 API 서버가 로컬 체크포인트를 직접 로드하지 않고 모델 서버의 `POST /generate`로 WAV를 전송합니다.
+- `AI_SERVICE_TOKEN`은 모델 서버와 API 서버에 같은 값으로 설정합니다.
 - `/healthz`: DB 연결, 체크포인트, 저장 경로 상태를 확인합니다.
 
 Render에서 배포하는 순서:
