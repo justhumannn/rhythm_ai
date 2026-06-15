@@ -28,6 +28,14 @@
         <div id="songInfo" class="song-info hidden">
           <span class="label">선택된 곡</span>
           <strong id="songTitle"></strong>
+          <span id="songBpm" class="song-bpm">BPM 미분석</span>
+          <div class="bpm-editor">
+            <label for="manualBpm">
+              BPM 직접 입력 (선택)
+              <input id="manualBpm" type="number" min="30" max="400" step="0.001" placeholder="비우면 자동 분석" />
+            </label>
+            <button id="analyzeBpmButton" type="button">BPM 적용 / 재분석</button>
+          </div>
         </div>
 
         <section id="existingCharts" class="chart-list hidden">

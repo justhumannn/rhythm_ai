@@ -61,6 +61,10 @@ class GenerateRequest(BaseModel):
     key_bindings: list[str]
 
 
+class BpmUpdateRequest(BaseModel):
+    bpm: float | None = Field(default=None, ge=30, le=400)
+
+
 class ChartManageRequest(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
@@ -149,6 +153,45 @@ def get_song(song_id: int, db: Session = Depends(get_db)):
     return song_payload(song)
 
 
+@app.post("/api/songs/{song_id}/bpm")
+def update_song_bpm(
+    song_id: int,
+    payload: BpmUpdateRequest,
+    db: Session = Depends(get_db),
+):
+    song = db.get(Song, song_id)
+    if song is None:
+        raise HTTPException(status_code=404, detail="노래를 찾을 수 없습니다.")
+
+    if payload.bpm is None:
+        try:
+            with heavy_job_slot():
+                with materialize_audio(song.wav_path) as audio_path:
+                    analysis = analyze_bpm(audio_path, title=song.title)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"BPM 분석 실패: {exc}",
+            ) from exc
+        apply_bpm_analysis(song, analysis.to_dict())
+    else:
+        apply_bpm_analysis(
+            song,
+            {
+                "bpm": round(payload.bpm, 3),
+                "confidence": 1.0,
+                "source": "manual",
+                "ambiguous": False,
+            },
+        )
+
+    db.commit()
+    db.refresh(song)
+    return song_payload(song)
+
+
 @app.post("/api/charts")
 def create_chart(payload: GenerateRequest, db: Session = Depends(get_db)):
     song = db.get(Song, payload.song_id)
@@ -159,8 +202,14 @@ def create_chart(payload: GenerateRequest, db: Session = Depends(get_db)):
     try:
         with heavy_job_slot():
             with materialize_audio(song.wav_path) as audio_path:
-                bpm_analysis = analyze_bpm(audio_path, title=song.title)
-                bpm = bpm_analysis.bpm
+                if song.bpm is None:
+                    bpm_analysis = analyze_bpm(audio_path, title=song.title)
+                    analysis_data = bpm_analysis.to_dict()
+                    apply_bpm_analysis(song, analysis_data)
+                    db.commit()
+                else:
+                    analysis_data = stored_bpm_analysis(song)
+                bpm = float(song.bpm)
                 chart_data, thresholds = generate_chart(
                     audio_path=audio_path,
                     title=song.title,
@@ -170,7 +219,7 @@ def create_chart(payload: GenerateRequest, db: Session = Depends(get_db)):
                     hold_ratio=payload.hold_ratio,
                     key_count=payload.key_count,
                 )
-            chart_data["generator"]["bpmAnalysis"] = bpm_analysis.to_dict()
+            chart_data["generator"]["bpmAnalysis"] = analysis_data
     except HTTPException:
         raise
     except Exception as exc:
@@ -256,6 +305,10 @@ def song_payload(song: Song) -> dict:
         "id": song.id,
         "youtube_url": song.youtube_url,
         "title": song.title,
+        "bpm": song.bpm,
+        "bpm_confidence": song.bpm_confidence,
+        "bpm_source": song.bpm_source,
+        "bpm_ambiguous": song.bpm_ambiguous,
         "charts": [chart_summary(chart) for chart in song.charts],
     }
 
@@ -332,3 +385,23 @@ def require_chart_password(chart: Chart, password: str) -> None:
         )
     if not verify_password(password, chart.password_hash):
         raise HTTPException(status_code=403, detail="비밀번호가 올바르지 않습니다.")
+
+
+def apply_bpm_analysis(song: Song, analysis: dict) -> None:
+    song.bpm = float(analysis["bpm"])
+    song.bpm_confidence = float(analysis.get("confidence", 0.0))
+    song.bpm_source = str(analysis.get("source", "audio_analysis"))
+    song.bpm_ambiguous = bool(analysis.get("ambiguous", False))
+
+
+def stored_bpm_analysis(song: Song) -> dict:
+    return {
+        "bpm": float(song.bpm),
+        "confidence": float(song.bpm_confidence or 0.0),
+        "source": song.bpm_source or "audio_analysis",
+        "stable": True,
+        "ambiguous": bool(song.bpm_ambiguous),
+        "local_bpm_median": None,
+        "local_bpm_spread": None,
+        "candidates": [],
+    }

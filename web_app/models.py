@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from web_app.database import Base
@@ -16,6 +16,10 @@ class Song(Base):
     youtube_url: Mapped[str] = mapped_column(String(1024), nullable=False)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     wav_path: Mapped[str] = mapped_column(String(2048), nullable=False)
+    bpm: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bpm_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bpm_source: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    bpm_ambiguous: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     charts: Mapped[list["Chart"]] = relationship(

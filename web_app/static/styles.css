@@ -179,6 +179,23 @@ p {
   background: var(--panel-2);
 }
 
+.song-bpm {
+  color: var(--accent-2);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.bpm-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.bpm-editor button {
+  white-space: nowrap;
+}
+
 .label,
 .section-title {
   color: var(--muted);
@@ -315,6 +332,7 @@ p {
   }
 
   .inline-row,
+  .bpm-editor,
   .settings-grid {
     grid-template-columns: 1fr;
   }

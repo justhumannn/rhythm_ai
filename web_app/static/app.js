@@ -29,6 +29,9 @@ const ctx = canvas.getContext("2d");
 const statusBadge = document.querySelector("#statusBadge");
 const songInfo = document.querySelector("#songInfo");
 const songTitle = document.querySelector("#songTitle");
+const songBpm = document.querySelector("#songBpm");
+const manualBpm = document.querySelector("#manualBpm");
+const analyzeBpmButton = document.querySelector("#analyzeBpmButton");
 const existingCharts = document.querySelector("#existingCharts");
 const chartButtons = document.querySelector("#chartButtons");
 const generateButton = document.querySelector("#generateButton");
@@ -63,6 +66,15 @@ keyBindButtons.forEach((button) => {
   button.addEventListener("click", () => captureKeyBinding(button));
 });
 
+analyzeBpmButton.addEventListener("click", async () => {
+  if (!state.song) return;
+  try {
+    await applySongBpm({ manageBusy: true });
+  } catch (error) {
+    showError(error);
+  }
+});
+
 songForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   setStatus("다운로드");
@@ -85,6 +97,10 @@ generateForm.addEventListener("submit", async (event) => {
   setStatus("생성 중");
   setBusy(true);
   try {
+    if (manualBpm.value || state.song.bpm === null || state.song.bpm === undefined) {
+      await applySongBpm({ manageBusy: false });
+      setStatus("생성 중");
+    }
     const chart = await postJson("/api/charts", {
       song_id: state.song.id,
       chart_name: document.querySelector("#chartNameInput").value,
@@ -138,15 +154,64 @@ window.addEventListener("keyup", (event) => {
 audioPlayer.addEventListener("ended", stopPlayback);
 
 function loadSong(song, autoLoadExisting = true) {
+  const changedSong = state.song?.id !== song.id;
   state.song = song;
   songInfo.classList.remove("hidden");
   songTitle.textContent = song.title;
+  renderSongBpm(song);
+  if (changedSong) {
+    manualBpm.value = "";
+  }
   generateButton.disabled = false;
   audioPlayer.src = `/api/songs/${song.id}/audio`;
   renderChartButtons(song.charts);
   if (autoLoadExisting && song.charts.length > 0) {
     getJson(`/api/charts/${song.charts[0].id}`).then(loadChart).catch(showError);
   }
+}
+
+async function applySongBpm({ manageBusy }) {
+  const rawBpm = manualBpm.value.trim();
+  const bpm = rawBpm === "" ? null : Number(rawBpm);
+  if (bpm !== null && (!Number.isFinite(bpm) || bpm < 30 || bpm > 400)) {
+    throw new Error("BPM은 30에서 400 사이로 입력해 주세요.");
+  }
+
+  setStatus(bpm === null ? "BPM 분석 중" : "BPM 적용 중");
+  if (manageBusy) setBusy(true);
+  analyzeBpmButton.disabled = true;
+  try {
+    const song = await postJson(`/api/songs/${state.song.id}/bpm`, { bpm });
+    state.song = song;
+    renderSongBpm(song);
+    manualBpm.value = "";
+    setStatus(bpm === null ? "BPM 분석됨" : "BPM 적용됨");
+    return song;
+  } finally {
+    if (manageBusy) {
+      setBusy(false);
+    } else {
+      analyzeBpmButton.disabled = false;
+    }
+  }
+}
+
+function renderSongBpm(song) {
+  if (song.bpm === null || song.bpm === undefined) {
+    songBpm.textContent = "BPM 미분석";
+    return;
+  }
+  const source = song.bpm_source === "manual" ? "직접 입력" : "자동 분석";
+  const confidence = song.bpm_confidence === null || song.bpm_confidence === undefined
+    ? ""
+    : ` · 신뢰도 ${Math.round(Number(song.bpm_confidence) * 100)}%`;
+  const warning = song.bpm_ambiguous ? " · 배수박 후보 있음" : "";
+  songBpm.textContent = `${formatBpm(song.bpm)} BPM · ${source}${confidence}${warning}`;
+}
+
+function formatBpm(value) {
+  const bpm = Number(value);
+  return Number.isInteger(bpm) ? String(bpm) : bpm.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
 }
 
 function renderChartButtons(charts) {
@@ -662,6 +727,7 @@ function setStatus(text) {
 function setBusy(isBusy) {
   songForm.querySelector("button").disabled = isBusy;
   generateButton.disabled = isBusy || !state.song;
+  analyzeBpmButton.disabled = isBusy || !state.song;
 }
 
 function showError(error) {
