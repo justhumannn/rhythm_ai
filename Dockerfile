@@ -18,9 +18,8 @@ RUN pip install --upgrade pip \
 
 COPY . .
 
-RUN mkdir -p /var/data/audio \
-    && useradd --create-home --uid 10001 appuser \
-    && chown -R appuser:appuser /app /var/data
+RUN useradd --create-home --uid 10001 appuser \
+    && chown -R appuser:appuser /app
 
 USER appuser
 

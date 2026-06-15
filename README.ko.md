@@ -359,33 +359,36 @@ http://127.0.0.1:8000/
 
 ## 클라우드 배포
 
-초기 공개 배포는 Render의 Docker Web Service, Supabase PostgreSQL, Persistent Disk 조합을 기준으로 구성되어 있습니다.
+초기 공개 배포는 Render의 Docker Web Service, Supabase PostgreSQL, Supabase Storage 조합을 기준으로 구성되어 있습니다.
 
 - `Dockerfile`: Python 3.12, CPU용 PyTorch, ffmpeg를 설치합니다.
-- `render.yaml`: 웹 서비스와 10GB 음원 디스크를 생성하고 Supabase 연결 문자열을 secret으로 받습니다.
+- `render.yaml`: 웹 서비스를 생성하고 Supabase DB와 Storage 접속 정보를 secret으로 받습니다.
 - 로컬에서는 `RHYTHM_ENV=local`과 `DATABASE_URL`로 SQLite를 SQLAlchemy에서 사용합니다.
 - 외부 배포에서는 `RHYTHM_ENV=production`과 `SUPABASE_DATABASE_URL`로 Supabase PostgreSQL을 SQLAlchemy에서 사용합니다.
-- `RHYTHM_STORAGE_DIR`: 다운로드한 WAV를 저장할 영구 디스크 경로입니다.
+- 로컬에서는 `RHYTHM_STORAGE_BACKEND=local`로 WAV를 `RHYTHM_STORAGE_DIR`에 저장합니다.
+- 운영에서는 `RHYTHM_STORAGE_BACKEND=supabase`로 private Storage bucket에 WAV를 저장합니다.
 - `/healthz`: DB 연결, 체크포인트, 저장 경로 상태를 확인합니다.
 
 Render에서 배포하는 순서:
 
 1. Supabase 프로젝트를 만들고 Dashboard의 **Connect**에서 Session Pooler 연결 문자열을 준비합니다.
-2. 변경 사항과 최신 모델인 `checkpoints/djmax_4b_aligned.pt`를 `justhumannn/rhythm_ai` 저장소에 push합니다.
-3. Render Dashboard에서 **New > Blueprint**를 선택합니다.
-4. GitHub의 `justhumannn/rhythm_ai` 저장소를 연결합니다.
-5. 저장소 루트의 `render.yaml`을 적용합니다.
-6. Blueprint 설정 중 `SUPABASE_DATABASE_URL`에 Session Pooler 연결 문자열을 입력합니다. 비밀번호에 특수문자가 있으면 URL 인코딩하고 문자열 끝에 `?sslmode=require`를 붙입니다.
-7. 배포가 끝나면 `https://서비스주소/healthz`에서 `status: ok`, `checkpoint: true`를 확인합니다.
+2. Supabase **Project Settings > API**에서 Project URL과 service role key를 준비합니다. service role key는 브라우저나 GitHub에 노출하면 안 됩니다.
+3. 변경 사항과 최신 모델인 `checkpoints/djmax_4b_aligned.pt`를 `justhumannn/rhythm_ai` 저장소에 push합니다.
+4. Render Dashboard에서 **New > Blueprint**를 선택합니다.
+5. GitHub의 `justhumannn/rhythm_ai` 저장소를 연결합니다.
+6. 저장소 루트의 `render.yaml`을 적용합니다.
+7. `SUPABASE_DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`를 입력합니다. DB 비밀번호에 특수문자가 있으면 URL 인코딩하고 연결 문자열 끝에 `?sslmode=require`를 붙입니다.
+8. 배포가 끝나면 `https://서비스주소/healthz`에서 `status: ok`, `checkpoint: true`, `storage.backend: supabase`를 확인합니다.
 
-현재 Blueprint는 싱가포르 리전, `standard` 웹 서비스와 10GB 디스크를 사용합니다. PyTorch 추론과 영구 디스크 때문에 무료 웹 서비스만으로는 운영할 수 없습니다.
+현재 Blueprint는 싱가포르 리전과 `standard` 웹 서비스를 사용합니다. Persistent Disk는 필요하지 않습니다. Supabase 무료 플랜의 Storage 용량은 1GB이고 파일 하나의 최대 크기는 50MB입니다. 앱도 업로드 전에 같은 제한을 검사합니다. 무료 할당량을 넘기면 파일을 정리해야 하며, 이 프로젝트는 유료 초과 사용을 전제로 하지 않습니다.
 
 로컬에서 배포 이미지를 확인하려면:
 
 ```bash
 docker build -t rhythm-ai:local .
 docker run --rm -p 8000:8000 \
-  -e RHYTHM_STORAGE_DIR=/var/data \
+  -e RHYTHM_STORAGE_BACKEND=local \
+  -e RHYTHM_STORAGE_DIR=/app/audio/web \
   rhythm-ai:local
 ```
 
@@ -393,7 +396,8 @@ docker run --rm -p 8000:8000 \
 
 주의사항:
 
-- Render의 일반 파일시스템은 재배포 시 초기화되므로 WAV는 반드시 `/var/data` Persistent Disk에 저장해야 합니다.
-- Persistent Disk가 연결된 서비스는 단일 인스턴스로 운영됩니다. 사용량이 늘면 WAV를 S3/R2 같은 객체 저장소로 옮기고 API와 생성 worker를 분리해야 합니다.
-- 로컬 SQLite 데이터와 `audio/web` 파일은 자동 이전되지 않습니다. 외부 배포는 연결한 Supabase DB와 빈 음원 디스크로 시작합니다.
+- Supabase bucket은 처음 음원을 저장할 때 private `rhythm-audio` bucket으로 자동 생성됩니다.
+- DB에는 실제 로컬 경로 대신 `supabase://rhythm-audio/...` 형식의 객체 참조가 저장됩니다.
+- 플레이할 때는 1시간짜리 signed URL을 발급하고, AI 생성 시에는 임시 파일로 내려받은 뒤 즉시 삭제합니다.
+- 기존 Persistent Disk나 로컬 `audio/web` 파일은 자동 이전되지 않습니다. 기존 DB의 로컬 파일 경로도 별도 마이그레이션이 필요합니다.
 - 클라우드 사업자 IP에서 YouTube 다운로드가 차단될 수 있습니다. 이 경우 사용자가 직접 음원을 업로드하거나 별도의 다운로드 worker를 두는 방식이 필요합니다.

@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -19,18 +19,21 @@ from web_app.database import Base, SessionLocal, engine
 from web_app.migrations import migrate_database
 from web_app.models import Chart, Song
 from web_app.security import hash_password, verify_password
+from web_app.storage import (
+    LOCAL_STORAGE_DIR,
+    STORAGE_BACKEND,
+    create_signed_url,
+    delete_audio,
+    materialize_audio,
+    storage_status,
+    store_audio,
+)
 from youtube_to_wav import download_youtube_as_wav
 
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC_DIR = ROOT / "web_app" / "static"
-configured_storage = os.environ.get("RHYTHM_STORAGE_DIR")
-if configured_storage:
-    STORAGE_DIR = Path(configured_storage).expanduser()
-    UPLOAD_DIR = STORAGE_DIR / "audio"
-else:
-    STORAGE_DIR = ROOT / "audio" / "web"
-    UPLOAD_DIR = STORAGE_DIR
+UPLOAD_DIR = LOCAL_STORAGE_DIR / "downloads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 HEAVY_JOB_SLOTS = threading.BoundedSemaphore(
     int(os.environ.get("RHYTHM_MAX_CONCURRENT_JOBS", "1"))
@@ -90,7 +93,7 @@ def healthcheck(db: Session = Depends(get_db)):
         "status": "ok",
         "database": "ok",
         "checkpoint": Path(checkpoint).exists(),
-        "storage": str(STORAGE_DIR),
+        "storage": storage_status(),
     }
 
 
@@ -108,14 +111,32 @@ def create_or_get_song(payload: SongRequest, db: Session = Depends(get_db)):
             raise
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"다운로드 실패: {exc}") from exc
-        song = Song(
-            youtube_url=payload.youtube_url,
-            title=result["title"],
-            wav_path=result["path"],
-        )
-        db.add(song)
-        db.commit()
-        db.refresh(song)
+        downloaded_path = Path(result["path"])
+        stored_reference = ""
+        try:
+            stored_reference = store_audio(downloaded_path)
+            song = Song(
+                youtube_url=payload.youtube_url,
+                title=result["title"],
+                wav_path=stored_reference,
+            )
+            db.add(song)
+            db.commit()
+            db.refresh(song)
+        except Exception as exc:
+            db.rollback()
+            if stored_reference:
+                try:
+                    delete_audio(stored_reference)
+                except Exception:
+                    pass
+            raise HTTPException(
+                status_code=502,
+                detail=f"음원 저장 실패: {exc}",
+            ) from exc
+        finally:
+            if STORAGE_BACKEND == "supabase":
+                downloaded_path.unlink(missing_ok=True)
 
     return song_payload(song)
 
@@ -133,23 +154,22 @@ def create_chart(payload: GenerateRequest, db: Session = Depends(get_db)):
     song = db.get(Song, payload.song_id)
     if song is None:
         raise HTTPException(status_code=404, detail="노래를 찾을 수 없습니다.")
-    if not Path(song.wav_path).exists():
-        raise HTTPException(status_code=404, detail="WAV 파일을 찾을 수 없습니다.")
     key_bindings = validate_key_bindings(payload.key_bindings, payload.key_count)
 
     try:
         with heavy_job_slot():
-            bpm_analysis = analyze_bpm(song.wav_path, title=song.title)
-            bpm = bpm_analysis.bpm
-            chart_data, thresholds = generate_chart(
-                audio_path=song.wav_path,
-                title=song.title,
-                bpm=bpm,
-                difficulty=payload.difficulty,
-                tap_ratio=payload.tap_ratio,
-                hold_ratio=payload.hold_ratio,
-                key_count=payload.key_count,
-            )
+            with materialize_audio(song.wav_path) as audio_path:
+                bpm_analysis = analyze_bpm(audio_path, title=song.title)
+                bpm = bpm_analysis.bpm
+                chart_data, thresholds = generate_chart(
+                    audio_path=audio_path,
+                    title=song.title,
+                    bpm=bpm,
+                    difficulty=payload.difficulty,
+                    tap_ratio=payload.tap_ratio,
+                    hold_ratio=payload.hold_ratio,
+                    key_count=payload.key_count,
+                )
             chart_data["generator"]["bpmAnalysis"] = bpm_analysis.to_dict()
     except HTTPException:
         raise
@@ -223,6 +243,8 @@ def get_audio(song_id: int, db: Session = Depends(get_db)):
     song = db.get(Song, song_id)
     if song is None:
         raise HTTPException(status_code=404, detail="노래를 찾을 수 없습니다.")
+    if song.wav_path.startswith("supabase://"):
+        return RedirectResponse(create_signed_url(song.wav_path), status_code=307)
     path = Path(song.wav_path)
     if not path.exists():
         raise HTTPException(status_code=404, detail="WAV 파일을 찾을 수 없습니다.")

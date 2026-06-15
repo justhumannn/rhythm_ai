@@ -13,8 +13,16 @@ services:
         value: production
       - key: SUPABASE_DATABASE_URL
         sync: false
-      - key: RHYTHM_STORAGE_DIR
-        value: /var/data
+      - key: RHYTHM_STORAGE_BACKEND
+        value: supabase
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: rhythm-audio
+      - key: SUPABASE_MAX_FILE_BYTES
+        value: "52428800"
       - key: RHYTHM_CHECKPOINT
         value: /app/checkpoints/djmax_4b_aligned.pt
       - key: YOUTUBE_MAX_DURATION_SECONDS
@@ -27,7 +35,3 @@ services:
         value: "5"
       - key: DATABASE_MAX_OVERFLOW
         value: "2"
-    disk:
-      name: rhythm-audio
-      mountPath: /var/data
-      sizeGB: 10
