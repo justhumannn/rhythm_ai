@@ -6,8 +6,12 @@ const state = {
   activeHolds: new Map(),
   hitEvents: new Set(),
   pressedLanes: new Set(),
+  missedHoldHeads: new Set(),
+  earnedScoreUnits: 0,
+  maxScoreUnits: 0,
   score: 0,
   combo: 0,
+  judgement: "-",
   running: false,
   animationId: null,
   scrollSpeed: 1,
@@ -31,6 +35,8 @@ const generateButton = document.querySelector("#generateButton");
 const chartName = document.querySelector("#chartName");
 const scoreEl = document.querySelector("#score");
 const comboEl = document.querySelector("#combo");
+const judgementEl = document.querySelector("#judgement");
+const rankEl = document.querySelector("#rank");
 const tapRatio = document.querySelector("#tapRatio");
 const holdRatio = document.querySelector("#holdRatio");
 const tapRatioValue = document.querySelector("#tapRatioValue");
@@ -190,6 +196,10 @@ async function loadChart(payload) {
     timeSeconds: Number(event.timeSeconds ?? beatToSeconds(event.beat, payload.chart.bpm.max)),
     endTimeSeconds: Number(event.endTimeSeconds ?? event.timeSeconds ?? beatToSeconds(event.endBeat ?? event.beat, payload.chart.bpm.max)),
   }));
+  state.maxScoreUnits = state.events.reduce(
+    (total, event) => total + (event.type === "hold" ? 2 : 1),
+    0,
+  );
   chartName.textContent = `${payload.name} · ${bpmLabel(payload)}`;
   playButton.disabled = false;
   resetScore();
@@ -258,6 +268,7 @@ async function renameChart(chart) {
 function loop() {
   if (!state.running) return;
   const currentTime = audioPlayer.currentTime;
+  processMissedNotes(currentTime);
   updateActiveHolds(currentTime);
   drawGame(currentTime);
   state.animationId = requestAnimationFrame(loop);
@@ -325,22 +336,20 @@ function hitLane(lane) {
     if (recoveredHold) {
       state.activeHolds.set(lane, { ...recoveredHold, recovered: true });
       state.combo += 1;
-      state.score += 150;
+      addScoreUnits(0.25, "BAD");
       updateScore();
-      return;
     }
-    state.combo = 0;
-    updateScore();
     return;
   }
+  const judgement = judgementForDelta(best.delta);
   if (best.event.type === "hold") {
     state.activeHolds.set(lane, best.event);
     state.combo += 1;
-    state.score += best.delta < 0.06 ? 600 : 300;
+    addScoreUnits(judgement.weight, judgement.label);
   } else {
     state.hitEvents.add(best.event.id);
     state.combo += 1;
-    state.score += best.delta < 0.06 ? 1000 : 500;
+    addScoreUnits(judgement.weight, judgement.label);
   }
   updateScore();
 }
@@ -360,6 +369,34 @@ function findRecoverableHold(lane, currentTime) {
     }
   }
   return best;
+}
+
+function processMissedNotes(currentTime) {
+  const missWindow = 0.14;
+  const releaseWindow = 0.16;
+
+  for (const event of state.events) {
+    if (state.hitEvents.has(event.id)) continue;
+
+    if (event.type === "hold") {
+      const lane = String(event.lane);
+      const isActive = state.activeHolds.get(lane)?.id === event.id;
+      if (!isActive && !state.missedHoldHeads.has(event.id) && currentTime > event.timeSeconds + missWindow) {
+        state.missedHoldHeads.add(event.id);
+        registerMiss();
+      }
+      if (!isActive && currentTime > event.endTimeSeconds + releaseWindow) {
+        state.hitEvents.add(event.id);
+        registerMiss();
+      }
+      continue;
+    }
+
+    if (currentTime > event.timeSeconds + missWindow) {
+      state.hitEvents.add(event.id);
+      registerMiss();
+    }
+  }
 }
 
 function updateActiveHolds(currentTime) {
@@ -391,18 +428,18 @@ function completeHold(lane, event, currentTime) {
   state.activeHolds.delete(lane);
   state.hitEvents.add(event.id);
   state.combo += 1;
-  if (event.recovered) {
-    state.score += delta < 0.08 ? 400 : 250;
-  } else {
-    state.score += delta < 0.08 ? 1000 : 700;
-  }
+  const judgement = judgementForDelta(delta);
+  const weight = event.recovered
+    ? Math.min(judgement.weight, 0.7)
+    : judgement.weight;
+  addScoreUnits(weight, judgement.label);
   updateScore();
 }
 
 function failHold(lane, event) {
   state.activeHolds.delete(lane);
   state.hitEvents.add(event.id);
-  state.combo = 0;
+  registerMiss();
   updateScore();
 }
 
@@ -410,8 +447,11 @@ function resetScore() {
   state.hitEvents = new Set();
   state.activeHolds = new Map();
   state.pressedLanes = new Set();
+  state.missedHoldHeads = new Set();
+  state.earnedScoreUnits = 0;
   state.score = 0;
   state.combo = 0;
+  state.judgement = "-";
   updateScore();
 }
 
@@ -420,6 +460,7 @@ function clearChart() {
   state.chartId = null;
   state.chart = null;
   state.events = [];
+  state.maxScoreUnits = 0;
   chartName.textContent = "없음";
   playButton.disabled = true;
   resetScore();
@@ -488,8 +529,42 @@ function labelForCode(code) {
 }
 
 function updateScore() {
-  scoreEl.textContent = String(state.score);
+  state.score = state.maxScoreUnits > 0
+    ? Math.min(1000000, Math.round(state.earnedScoreUnits / state.maxScoreUnits * 1000000))
+    : 0;
+  scoreEl.textContent = state.score.toLocaleString("ko-KR");
   comboEl.textContent = String(state.combo);
+  judgementEl.textContent = state.judgement;
+  rankEl.textContent = rankForScore(state.score);
+}
+
+function judgementForDelta(delta) {
+  if (delta <= 0.035) return { label: "PERFECT", weight: 1 };
+  if (delta <= 0.07) return { label: "GREAT", weight: 0.9 };
+  if (delta <= 0.105) return { label: "GOOD", weight: 0.7 };
+  return { label: "BAD", weight: 0.4 };
+}
+
+function addScoreUnits(weight, judgement) {
+  state.earnedScoreUnits += weight;
+  state.judgement = judgement;
+}
+
+function registerMiss() {
+  state.combo = 0;
+  state.judgement = "MISS";
+  updateScore();
+}
+
+function rankForScore(score) {
+  if (score >= 995000) return "SSS";
+  if (score >= 990000) return "SS+";
+  if (score >= 985000) return "SS";
+  if (score >= 980000) return "S";
+  if (score >= 970000) return "AAA";
+  if (score >= 960000) return "AA";
+  if (score >= 900000) return "A";
+  return "-";
 }
 
 function stopPlayback() {
