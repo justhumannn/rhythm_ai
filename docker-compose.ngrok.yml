@@ -1,0 +1,67 @@
+services:
+  model-server:
+    build:
+      context: ${RHYTHM_MODEL_SERVER_DIR:-../rhythm_model_server}
+    environment:
+      RHYTHM_ENV: production
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
+      AI_MAX_CONCURRENT_JOBS: ${AI_MAX_CONCURRENT_JOBS:-1}
+      AI_MAX_UPLOAD_BYTES: ${AI_MAX_UPLOAD_BYTES:-524288000}
+      RHYTHM_CHECKPOINT: /app/checkpoints/djmax_4b_aligned.pt
+    ports:
+      - "8001:8000"
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+    depends_on:
+      - model-server
+    environment:
+      RHYTHM_ENV: local
+      DATABASE_URL: sqlite:////app/data/rhythm_web.sqlite
+      RHYTHM_STORAGE_BACKEND: local
+      RHYTHM_STORAGE_DIR: /app/audio/web
+      RHYTHM_MAX_CONCURRENT_JOBS: ${RHYTHM_MAX_CONCURRENT_JOBS:-1}
+      AI_SERVICE_URL: http://model-server:8000
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
+      AI_SERVICE_TIMEOUT_SECONDS: ${AI_SERVICE_TIMEOUT_SECONDS:-600}
+      YOUTUBE_MAX_DURATION_SECONDS: ${YOUTUBE_MAX_DURATION_SECONDS:-600}
+      YOUTUBE_MAX_FILESIZE_BYTES: ${YOUTUBE_MAX_FILESIZE_BYTES:-524288000}
+      YOUTUBE_COOKIES_FILE: ${YOUTUBE_COOKIES_FILE:-}
+      YOUTUBE_USER_AGENT: ${YOUTUBE_USER_AGENT:-}
+    volumes:
+      - rhythm-api-data:/app/data
+      - rhythm-api-audio:/app/audio/web
+      - ${YOUTUBE_COOKIES_HOST_FILE:-/dev/null}:/run/secrets/youtube-cookies.txt:ro
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  ngrok-api:
+    image: ngrok/ngrok:latest
+    depends_on:
+      - api
+    command: ["http", "http://api:8000", "--log=stdout"]
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+    ports:
+      - "4040:4040"
+    restart: unless-stopped
+
+  ngrok-model:
+    image: ngrok/ngrok:latest
+    depends_on:
+      - model-server
+    command: ["http", "http://model-server:8000", "--log=stdout"]
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+    ports:
+      - "4041:4040"
+    profiles:
+      - expose-model
+    restart: unless-stopped
+
+volumes:
+  rhythm-api-data:
+  rhythm-api-audio:

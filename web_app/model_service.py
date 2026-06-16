@@ -87,6 +87,59 @@ def generate_chart_remotely(
     return chart, thresholds, bpm_analysis
 
 
+def analyze_bpm_remotely(
+    *,
+    audio_path: str | Path,
+    title: str | None = None,
+) -> dict[str, Any]:
+    if not MODEL_SERVICE_URL:
+        raise RuntimeError("AI_SERVICE_URL이 설정되지 않았습니다.")
+
+    headers = {}
+    if MODEL_SERVICE_TOKEN:
+        headers["Authorization"] = f"Bearer {MODEL_SERVICE_TOKEN}"
+    data = {}
+    if title:
+        data["title"] = title
+
+    try:
+        with Path(audio_path).open("rb") as audio:
+            files = {"audio": (Path(audio_path).name, audio, "audio/wav")}
+            response = httpx.post(
+                f"{MODEL_SERVICE_URL}/bpm",
+                data=data,
+                files=files,
+                headers=headers,
+                timeout=MODEL_SERVICE_TIMEOUT,
+            )
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"모델 서버 BPM 분석 연결 실패: {exc}",
+        ) from exc
+
+    if response.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail=f"모델 서버 BPM 분석 오류: {read_error_detail(response)}",
+        )
+
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="모델 서버가 올바른 BPM JSON을 반환하지 않았습니다.",
+        ) from exc
+    bpm_analysis = payload.get("bpm_analysis")
+    if not isinstance(bpm_analysis, dict):
+        raise HTTPException(
+            status_code=502,
+            detail="모델 서버 응답에 bpm_analysis가 없습니다.",
+        )
+    return bpm_analysis
+
+
 def read_error_detail(response: httpx.Response) -> str:
     try:
         body = response.json()

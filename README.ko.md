@@ -404,6 +404,73 @@ docker run --rm -p 8000:8000 \
 - 기존 Persistent Disk나 로컬 `audio/web` 파일은 자동 이전되지 않습니다. 기존 DB의 로컬 파일 경로도 별도 마이그레이션이 필요합니다.
 - 클라우드 사업자 IP에서 YouTube 다운로드가 차단될 수 있습니다. 이 경우 사용자가 직접 음원을 업로드하거나 별도의 다운로드 worker를 두는 방식이 필요합니다.
 
+## 로컬 Docker + ngrok 공개 배포
+
+외부 클라우드 빌드가 실패할 때는 로컬 PC에서 Docker로 API 서버와 모델 서버를 실행하고 ngrok으로 외부 URL을 열 수 있습니다.
+
+### 1. 모델 서버 저장소 준비
+
+`rhythm` 폴더와 같은 상위 폴더에 모델 서버 저장소를 둡니다.
+
+```bash
+cd /Users/yeocheoljun/Documents
+gh repo clone justhumannn/rhythm_model_server rhythm_model_server
+```
+
+이미 다른 위치에 있다면 `.env.ngrok`의 `RHYTHM_MODEL_SERVER_DIR`만 그 경로로 바꿉니다.
+
+### 2. 환경변수 파일 생성
+
+```bash
+cd /Users/yeocheoljun/Documents/rhythm
+cp .env.ngrok.example .env.ngrok
+```
+
+`.env.ngrok`에서 다음 값은 반드시 바꿉니다.
+
+```text
+NGROK_AUTHTOKEN=ngrok_토큰
+AI_SERVICE_TOKEN=모델서버와_API서버가_공유할_긴_문자열
+```
+
+YouTube가 봇 확인을 요구하면 쿠키 파일을 만든 뒤 아래 값도 켭니다.
+
+```text
+YOUTUBE_COOKIES_HOST_FILE=./youtube-cookies.txt
+YOUTUBE_COOKIES_FILE=/run/secrets/youtube-cookies.txt
+```
+
+### 3. 실행
+
+API 서버와 모델 서버, API용 ngrok 터널을 실행합니다.
+
+```bash
+docker compose --env-file .env.ngrok -f docker-compose.ngrok.yml up --build
+```
+
+로그에서 `ngrok-api`가 출력하는 `https://...ngrok-free.app` 주소가 사용자에게 공유할 웹 서비스 주소입니다.
+
+모델 서버도 외부에서 직접 확인하고 싶다면 profile을 추가합니다.
+
+```bash
+docker compose --env-file .env.ngrok -f docker-compose.ngrok.yml --profile expose-model up --build
+```
+
+ngrok 무료 계정은 동시에 열 수 있는 터널 수가 제한될 수 있습니다. 실제 서비스 이용에는 API 터널 하나만 필요합니다. API 컨테이너는 Docker 내부 네트워크 주소인 `http://model-server:8000`으로 모델 서버를 호출합니다.
+
+### 4. 로컬 확인 URL
+
+- API: `http://127.0.0.1:8000`
+- API health: `http://127.0.0.1:8000/healthz`
+- 모델 서버: `http://127.0.0.1:8001`
+- ngrok API dashboard: `http://127.0.0.1:4040`
+
+중지하려면:
+
+```bash
+docker compose --env-file .env.ngrok -f docker-compose.ngrok.yml down
+```
+
 ### Render에서 YouTube 봇 확인 오류 해결
 
 Render 같은 데이터센터 IP는 YouTube에서 `Sign in to confirm you're not a bot` 오류로 차단될 수 있습니다. 이 경우 브라우저 쿠키를 GitHub에 커밋하거나 일반 환경변수에 붙여 넣지 말고 Render의 Secret File을 사용합니다.

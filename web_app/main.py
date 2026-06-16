@@ -13,10 +13,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from web_app.chart_generator import chart_from_json, chart_to_json, generate_chart
+from web_app.chart_generator import chart_from_json, chart_to_json
 from web_app.database import Base, SessionLocal, engine
 from web_app.migrations import migrate_database
-from web_app.model_service import generate_chart_remotely, model_service_enabled
+from web_app.model_service import (
+    analyze_bpm_remotely,
+    generate_chart_remotely,
+    model_service_enabled,
+)
 from web_app.models import Chart, Song
 from web_app.security import hash_password, verify_password
 from web_app.storage import (
@@ -170,11 +174,15 @@ def update_song_bpm(
         try:
             with heavy_job_slot():
                 with materialize_audio(song.wav_path) as audio_path:
-                    # A manual reanalysis must inspect the WAV itself instead of
-                    # reusing the DJMAX title catalog value.
-                    from web_app.bpm import analyze_bpm
+                    if model_service_enabled():
+                        analysis_data = analyze_bpm_remotely(audio_path=audio_path)
+                    else:
+                        # A manual reanalysis must inspect the WAV itself instead of
+                        # reusing the DJMAX title catalog value.
+                        from web_app.bpm import analyze_bpm
 
-                    analysis = analyze_bpm(audio_path)
+                        analysis = analyze_bpm(audio_path)
+                        analysis_data = analysis.to_dict()
         except HTTPException:
             raise
         except Exception as exc:
@@ -182,7 +190,7 @@ def update_song_bpm(
                 status_code=500,
                 detail=f"BPM 분석 실패: {exc}",
             ) from exc
-        apply_bpm_analysis(song, analysis.to_dict())
+        apply_bpm_analysis(song, analysis_data)
     else:
         apply_bpm_analysis(
             song,
@@ -234,6 +242,8 @@ def create_chart(payload: GenerateRequest, db: Session = Depends(get_db)):
                     else:
                         analysis_data = stored_bpm_analysis(song)
                     bpm = float(song.bpm)
+                    from web_app.chart_generator import generate_chart
+
                     chart_data, thresholds = generate_chart(
                         audio_path=audio_path,
                         title=song.title,

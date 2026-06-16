@@ -5,10 +5,6 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-import torch
-
-from rhythm_ai.audio import audio_to_features
-from rhythm_ai.model import ChartGenerator
 from rhythm_ai.postprocess import (
     dedupe_same_lane_events,
     logits_to_chart_events,
@@ -47,6 +43,10 @@ def generate_chart(
     hold_ratio: float,
     key_count: int,
 ) -> tuple[dict, dict]:
+    import torch
+
+    from rhythm_ai.audio import audio_to_features
+
     if key_count != 4:
         raise ValueError("현재 학습된 모델은 4B만 지원합니다.")
 
@@ -192,6 +192,10 @@ def load_model():
 
 @lru_cache(maxsize=2)
 def load_model_cached(checkpoint_path: str, modified_ns: int):
+    import torch
+
+    from rhythm_ai.model import ChartGenerator
+
     if torch.cuda.is_available():
         device = torch.device("cuda")
     elif torch.backends.mps.is_available():
