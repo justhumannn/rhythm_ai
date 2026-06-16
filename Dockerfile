@@ -22,7 +22,8 @@ RUN pip install --upgrade pip \
 COPY . .
 
 RUN useradd --create-home --uid 10001 appuser \
-    && chown -R appuser:appuser /app
+    && mkdir -p /app/data /app/audio/web/downloads \
+    && chown -R appuser:appuser /app /home/appuser
 
 USER appuser
 

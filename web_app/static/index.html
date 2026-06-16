@@ -121,6 +121,28 @@
           </div>
           <button id="playButton" disabled>재생</button>
         </div>
+        <div class="play-settings">
+          <label>
+            음량 <output id="volumeValue">80%</output>
+            <input id="volumeControl" type="range" min="0" max="100" value="80" />
+          </label>
+          <label>
+            이펙트
+            <select id="hitEffectMode">
+              <option value="burst" selected>버스트</option>
+              <option value="ring">링</option>
+              <option value="off">끄기</option>
+            </select>
+          </label>
+          <label>
+            이펙트 크기 <output id="hitEffectSizeValue">1.0x</output>
+            <input id="hitEffectSize" type="range" min="0.5" max="2" step="0.1" value="1" />
+          </label>
+          <label>
+            이펙트 지속 <output id="hitEffectDurationValue">0.25s</output>
+            <input id="hitEffectDuration" type="range" min="0.1" max="0.6" step="0.05" value="0.25" />
+          </label>
+        </div>
         <canvas id="gameCanvas" width="640" height="820"></canvas>
         <div class="key-guide">
           <span data-key-guide="1">D</span>

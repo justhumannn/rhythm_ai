@@ -288,6 +288,18 @@ p {
   min-width: 150px;
 }
 
+.play-settings {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  gap: 12px;
+  align-items: end;
+  padding-bottom: 2px;
+}
+
+.play-settings label {
+  min-width: 0;
+}
+
 .key-guide {
   display: grid;
   grid-template-columns: repeat(4, 64px);
@@ -333,7 +345,8 @@ p {
 
   .inline-row,
   .bpm-editor,
-  .settings-grid {
+  .settings-grid,
+  .play-settings {
     grid-template-columns: 1fr;
   }
 

@@ -15,6 +15,10 @@ const state = {
   running: false,
   animationId: null,
   scrollSpeed: 1,
+  hitEffects: [],
+  hitEffectMode: "burst",
+  hitEffectSize: 1,
+  hitEffectDuration: 0.25,
   keyBindings: ["KeyD", "KeyF", "KeyJ", "KeyK"],
   keyLabels: ["D", "F", "J", "K"],
 };
@@ -46,7 +50,16 @@ const tapRatioValue = document.querySelector("#tapRatioValue");
 const holdRatioValue = document.querySelector("#holdRatioValue");
 const scrollSpeed = document.querySelector("#scrollSpeed");
 const scrollSpeedValue = document.querySelector("#scrollSpeedValue");
+const volumeControl = document.querySelector("#volumeControl");
+const volumeValue = document.querySelector("#volumeValue");
+const hitEffectMode = document.querySelector("#hitEffectMode");
+const hitEffectSize = document.querySelector("#hitEffectSize");
+const hitEffectSizeValue = document.querySelector("#hitEffectSizeValue");
+const hitEffectDuration = document.querySelector("#hitEffectDuration");
+const hitEffectDurationValue = document.querySelector("#hitEffectDurationValue");
 const keyBindButtons = [...document.querySelectorAll(".key-bind-button")];
+
+audioPlayer.volume = Number(volumeControl.value) / 100;
 
 tapRatio.addEventListener("input", () => {
   tapRatioValue.value = tapRatio.value;
@@ -60,6 +73,25 @@ scrollSpeed.addEventListener("input", () => {
   state.scrollSpeed = Number(scrollSpeed.value);
   scrollSpeedValue.value = `${state.scrollSpeed.toFixed(1)}x`;
   drawGame(audioPlayer.currentTime || 0);
+});
+
+volumeControl.addEventListener("input", () => {
+  audioPlayer.volume = Number(volumeControl.value) / 100;
+  volumeValue.value = `${volumeControl.value}%`;
+});
+
+hitEffectMode.addEventListener("change", () => {
+  state.hitEffectMode = hitEffectMode.value;
+});
+
+hitEffectSize.addEventListener("input", () => {
+  state.hitEffectSize = Number(hitEffectSize.value);
+  hitEffectSizeValue.value = `${state.hitEffectSize.toFixed(1)}x`;
+});
+
+hitEffectDuration.addEventListener("input", () => {
+  state.hitEffectDuration = Number(hitEffectDuration.value);
+  hitEffectDurationValue.value = `${state.hitEffectDuration.toFixed(2)}s`;
 });
 
 keyBindButtons.forEach((button) => {
@@ -147,8 +179,8 @@ window.addEventListener("keydown", (event) => {
 window.addEventListener("keyup", (event) => {
   const lane = laneForCode(event.code);
   if (!lane) return;
-  state.pressedLanes.delete(lane);
   releaseHold(lane, audioPlayer.currentTime);
+  state.pressedLanes.delete(lane);
 });
 
 audioPlayer.addEventListener("ended", stopPlayback);
@@ -388,6 +420,8 @@ function drawGame(currentTime) {
     }
     ctx.fillRect(x, y - 9, noteWidth, 18);
   }
+
+  drawHitEffects(currentTime, laneWidth, receptorY);
 }
 
 function hitLane(lane) {
@@ -404,22 +438,25 @@ function hitLane(lane) {
   if (!best) {
     const recoveredHold = findRecoverableHold(lane, currentTime);
     if (recoveredHold) {
-      state.activeHolds.set(lane, { ...recoveredHold, recovered: true });
+      state.activeHolds.set(lane, startHoldState(recoveredHold, currentTime, true));
       state.combo += 1;
       addScoreUnits(0.25, "BAD");
+      spawnHitEffect(lane, "BAD", currentTime);
       updateScore();
     }
     return;
   }
   const judgement = judgementForDelta(best.delta);
   if (best.event.type === "hold") {
-    state.activeHolds.set(lane, best.event);
+    state.activeHolds.set(lane, startHoldState(best.event, currentTime));
     state.combo += 1;
     addScoreUnits(judgement.weight, judgement.label);
+    spawnHitEffect(lane, judgement.label, currentTime);
   } else {
     state.hitEvents.add(best.event.id);
     state.combo += 1;
     addScoreUnits(judgement.weight, judgement.label);
+    spawnHitEffect(lane, judgement.label, currentTime);
   }
   updateScore();
 }
@@ -471,38 +508,39 @@ function processMissedNotes(currentTime) {
 
 function updateActiveHolds(currentTime) {
   const releaseWindow = 0.16;
-  for (const [lane, event] of state.activeHolds.entries()) {
-    if (!state.pressedLanes.has(lane) && currentTime < event.endTimeSeconds - releaseWindow) {
-      failHold(lane, event);
-      continue;
-    }
-    if (currentTime >= event.endTimeSeconds - releaseWindow) {
-      completeHold(lane, event, currentTime);
+  for (const [lane, hold] of state.activeHolds.entries()) {
+    updateHoldProgress(lane, hold, currentTime);
+    if (currentTime >= hold.endTimeSeconds - releaseWindow) {
+      completeHold(lane, hold, currentTime);
     }
   }
 }
 
 function releaseHold(lane, currentTime) {
-  const event = state.activeHolds.get(lane);
-  if (!event) return;
+  const hold = state.activeHolds.get(lane);
+  if (!hold) return;
+  updateHoldProgress(lane, hold, currentTime);
   const releaseWindow = 0.16;
-  if (currentTime >= event.endTimeSeconds - releaseWindow) {
-    completeHold(lane, event, currentTime);
-  } else {
-    failHold(lane, event);
+  if (currentTime >= hold.endTimeSeconds - releaseWindow) {
+    completeHold(lane, hold, currentTime);
   }
 }
 
 function completeHold(lane, event, currentTime) {
-  const delta = Math.abs(event.endTimeSeconds - currentTime);
+  updateHoldProgress(lane, event, currentTime);
   state.activeHolds.delete(lane);
   state.hitEvents.add(event.id);
-  state.combo += 1;
-  const judgement = judgementForDelta(delta);
-  const weight = event.recovered
-    ? Math.min(judgement.weight, 0.7)
-    : judgement.weight;
-  addScoreUnits(weight, judgement.label);
+  const judgement = judgementForHoldRatio(holdPressRatio(event));
+  if (judgement.weight > 0) {
+    state.combo += 1;
+    const weight = event.recovered
+      ? Math.min(judgement.weight, 0.7)
+      : judgement.weight;
+    addScoreUnits(weight, judgement.label);
+    spawnHitEffect(lane, judgement.label, currentTime);
+  } else {
+    registerMiss();
+  }
   updateScore();
 }
 
@@ -513,11 +551,96 @@ function failHold(lane, event) {
   updateScore();
 }
 
+function startHoldState(event, currentTime, recovered = false) {
+  return {
+    ...event,
+    recovered,
+    heldSeconds: 0,
+    lastProgressTime: Math.max(currentTime, event.timeSeconds),
+  };
+}
+
+function updateHoldProgress(lane, hold, currentTime) {
+  const from = Math.max(hold.lastProgressTime, hold.timeSeconds);
+  const to = Math.min(currentTime, hold.endTimeSeconds);
+  if (to > from && state.pressedLanes.has(lane)) {
+    hold.heldSeconds += to - from;
+  }
+  hold.lastProgressTime = Math.max(hold.lastProgressTime, currentTime);
+}
+
+function holdPressRatio(event) {
+  const duration = Math.max(0.001, event.endTimeSeconds - event.timeSeconds);
+  return Math.max(0, Math.min(1, event.heldSeconds / duration));
+}
+
+function judgementForHoldRatio(ratio) {
+  if (ratio >= 0.9) return { label: "PERFECT", weight: 1 };
+  if (ratio >= 0.75) return { label: "GREAT", weight: ratio };
+  if (ratio >= 0.5) return { label: "GOOD", weight: ratio };
+  if (ratio > 0) return { label: "BAD", weight: ratio };
+  return { label: "MISS", weight: 0 };
+}
+
+function spawnHitEffect(lane, judgement, currentTime) {
+  if (state.hitEffectMode === "off") return;
+  state.hitEffects.push({
+    lane: Number(lane) - 1,
+    judgement,
+    startTime: currentTime,
+    duration: state.hitEffectDuration,
+  });
+}
+
+function drawHitEffects(currentTime, laneWidth, receptorY) {
+  if (state.hitEffects.length === 0) return;
+  state.hitEffects = state.hitEffects.filter((effect) => currentTime - effect.startTime <= effect.duration);
+  for (const effect of state.hitEffects) {
+    const elapsed = Math.max(0, currentTime - effect.startTime);
+    const progress = Math.min(1, elapsed / effect.duration);
+    const alpha = 1 - progress;
+    const centerX = effect.lane * laneWidth + laneWidth / 2;
+    const baseRadius = laneWidth * 0.28 * state.hitEffectSize;
+    const radius = baseRadius + baseRadius * 0.9 * progress;
+    const color = effectColor(effect.judgement);
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(2, 5 * state.hitEffectSize * (1 - progress * 0.35));
+    ctx.beginPath();
+    ctx.arc(centerX, receptorY, radius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    if (state.hitEffectMode === "burst") {
+      ctx.fillStyle = color;
+      for (let index = 0; index < 8; index += 1) {
+        const angle = (Math.PI * 2 * index) / 8;
+        const distance = radius * (0.75 + progress * 0.7);
+        const x = centerX + Math.cos(angle) * distance;
+        const y = receptorY + Math.sin(angle) * distance;
+        ctx.beginPath();
+        ctx.arc(x, y, Math.max(2, 4 * state.hitEffectSize * alpha), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+}
+
+function effectColor(judgement) {
+  if (judgement === "PERFECT") return "#43c7b8";
+  if (judgement === "GREAT") return "#9ed9f4";
+  if (judgement === "GOOD") return "#f0b85a";
+  return "#ff9da6";
+}
+
 function resetScore() {
   state.hitEvents = new Set();
   state.activeHolds = new Map();
   state.pressedLanes = new Set();
   state.missedHoldHeads = new Set();
+  state.hitEffects = [];
   state.earnedScoreUnits = 0;
   state.score = 0;
   state.combo = 0;
@@ -645,6 +768,7 @@ function stopPlayback() {
   audioPlayer.currentTime = 0;
   state.activeHolds = new Map();
   state.pressedLanes = new Set();
+  state.hitEffects = [];
   drawGame(0);
 }
 
